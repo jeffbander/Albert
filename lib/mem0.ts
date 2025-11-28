@@ -81,4 +81,16 @@ export async function getRecentMemories(limit: number = 5): Promise<Memory[]> {
   }
 }
 
+export async function getEchoMemories(limit: number = 50): Promise<Memory[]> {
+  try {
+    const mem0 = getMem0Client();
+    const results = await mem0.getAll({ user_id: ECHO_SELF_ID });
+    const memories = results as Memory[];
+    return memories.slice(0, limit);
+  } catch (error) {
+    console.error('Error getting Echo memories:', error);
+    return [];
+  }
+}
+
 export default getMem0Client;

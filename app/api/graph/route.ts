@@ -8,7 +8,7 @@ import {
   getConversationCount,
   getTotalInteractionTime,
 } from '@/lib/db';
-import { getRecentMemories, searchEchoMemories } from '@/lib/mem0';
+import { getRecentMemories, getEchoMemories } from '@/lib/mem0';
 
 export interface GraphNode {
   id: string;
@@ -62,7 +62,7 @@ export async function GET() {
       totalSeconds,
     ] = await Promise.all([
       getRecentMemories(50),
-      searchEchoMemories(''),
+      getEchoMemories(50),
       getEchoSelfModel(),
       getTimeline(20),
       getRecentEpisodicMemories(30),
