@@ -280,11 +280,21 @@ export default function Home() {
 
       {/* Header */}
       <div className="absolute top-8 left-8">
-        <h1 className="text-2xl font-light text-gray-300 tracking-wider">echo</h1>
+        <h1 className="text-2xl font-light text-gray-300 tracking-wider">Albert</h1>
+        <p className="text-xs text-gray-500 mt-1">by Bander Labs</p>
       </div>
 
-      {/* Status indicator */}
-      <div className="absolute top-8 right-8">
+      {/* Status indicator and Graph link */}
+      <div className="absolute top-8 right-8 flex items-center gap-4">
+        <a
+          href="/graph"
+          className="text-sm text-gray-400 hover:text-purple-400 transition-colors flex items-center gap-2"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          Knowledge Graph
+        </a>
         <StatusIndicator state={state} isConnected={isConnected} />
       </div>
 
@@ -304,10 +314,17 @@ export default function Home() {
 
       {/* Instructions */}
       {!isConnected && !error && (
-        <p className="absolute bottom-8 text-gray-500 text-sm">
+        <p className="absolute bottom-20 text-gray-500 text-sm">
           Click the orb to start a conversation
         </p>
       )}
+
+      {/* Footer */}
+      <div className="absolute bottom-4 text-center">
+        <p className="text-xs text-gray-600">
+          Created by <span className="text-purple-400">Bander Labs</span>
+        </p>
+      </div>
     </main>
   );
 }
