@@ -52,7 +52,7 @@ export default function KnowledgeGraphPage() {
   const [filter, setFilter] = useState<string>('all');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<GraphNode[]>([]);
-  const animationRef = useRef<number>();
+  const animationRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     fetchGraphData();
