@@ -1,0 +1,26 @@
+{
+  "name": "caresync-ai",
+  "version": "1.0.0",
+  "description": "Medical AI Patient Assistant - WhatsApp-enabled AI companions for patient care",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.22",
+    "mem0ai": "^2.1.38",
+    "next": "^14.2.33",
+    "openai": "^6.9.1",
+    "postcss": "^8.5.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.18",
+    "typescript": "^5.9.3"
+  }
+}

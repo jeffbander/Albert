@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "env": {
+    "OPENAI_API_KEY": "@openai-api-key",
+    "MEM0_API_KEY": "@mem0-api-key",
+    "TURSO_DATABASE_URL": "@turso-database-url",
+    "TURSO_AUTH_TOKEN": "@turso-auth-token",
+    "WHATSAPP_ACCESS_TOKEN": "@whatsapp-access-token",
+    "WHATSAPP_PHONE_NUMBER_ID": "@whatsapp-phone-number-id",
+    "WHATSAPP_WEBHOOK_VERIFY_TOKEN": "@whatsapp-webhook-verify-token"
+  }
+}
