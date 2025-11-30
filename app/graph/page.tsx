@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import PasscodeGate from '@/components/PasscodeGate';
 
 interface GraphNode {
   id: string;
@@ -278,7 +279,8 @@ export default function KnowledgeGraphPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
+    <PasscodeGate>
+      <div className="min-h-screen bg-gray-900 text-white p-6">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -483,6 +485,7 @@ export default function KnowledgeGraphPage() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </PasscodeGate>
   );
 }

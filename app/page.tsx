@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import EchoOrb, { EchoState } from '@/components/EchoOrb';
 import StatusIndicator from '@/components/StatusIndicator';
+import PasscodeGate from '@/components/PasscodeGate';
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -274,57 +275,59 @@ export default function Home() {
   }, [cleanup]);
 
   return (
-    <main className="min-h-screen bg-gradient-animated flex flex-col items-center justify-center p-4">
-      {/* Hidden audio element for playback */}
-      <audio ref={audioRef} autoPlay />
+    <PasscodeGate>
+      <main className="min-h-screen bg-gradient-animated flex flex-col items-center justify-center p-4">
+        {/* Hidden audio element for playback */}
+        <audio ref={audioRef} autoPlay />
 
-      {/* Header */}
-      <div className="absolute top-8 left-8">
-        <h1 className="text-2xl font-light text-gray-300 tracking-wider">Albert</h1>
-        <p className="text-xs text-gray-500 mt-1">by Bander Labs</p>
-      </div>
-
-      {/* Status indicator and Graph link */}
-      <div className="absolute top-8 right-8 flex items-center gap-4">
-        <a
-          href="/graph"
-          className="text-sm text-gray-400 hover:text-purple-400 transition-colors flex items-center gap-2"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          Knowledge Graph
-        </a>
-        <StatusIndicator state={state} isConnected={isConnected} />
-      </div>
-
-      {/* Main orb */}
-      <EchoOrb
-        state={state}
-        onClick={handleOrbClick}
-        isConnected={isConnected}
-      />
-
-      {/* Error message */}
-      {error && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-red-500/20 border border-red-500/50 text-red-300 px-4 py-2 rounded-lg text-sm">
-          {error}
+        {/* Header */}
+        <div className="absolute top-8 left-8">
+          <h1 className="text-2xl font-light text-gray-300 tracking-wider">Albert</h1>
+          <p className="text-xs text-gray-500 mt-1">by Bander Labs</p>
         </div>
-      )}
 
-      {/* Instructions */}
-      {!isConnected && !error && (
-        <p className="absolute bottom-20 text-gray-500 text-sm">
-          Click the orb to start a conversation
-        </p>
-      )}
+        {/* Status indicator and Graph link */}
+        <div className="absolute top-8 right-8 flex items-center gap-4">
+          <a
+            href="/graph"
+            className="text-sm text-gray-400 hover:text-purple-400 transition-colors flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            Knowledge Graph
+          </a>
+          <StatusIndicator state={state} isConnected={isConnected} />
+        </div>
 
-      {/* Footer */}
-      <div className="absolute bottom-4 text-center">
-        <p className="text-xs text-gray-600">
-          Created by <span className="text-purple-400">Bander Labs</span>
-        </p>
-      </div>
-    </main>
+        {/* Main orb */}
+        <EchoOrb
+          state={state}
+          onClick={handleOrbClick}
+          isConnected={isConnected}
+        />
+
+        {/* Error message */}
+        {error && (
+          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-red-500/20 border border-red-500/50 text-red-300 px-4 py-2 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Instructions */}
+        {!isConnected && !error && (
+          <p className="absolute bottom-20 text-gray-500 text-sm">
+            Click the orb to start a conversation
+          </p>
+        )}
+
+        {/* Footer */}
+        <div className="absolute bottom-4 text-center">
+          <p className="text-xs text-gray-600">
+            Created by <span className="text-purple-400">Bander Labs</span>
+          </p>
+        </div>
+      </main>
+    </PasscodeGate>
   );
 }
