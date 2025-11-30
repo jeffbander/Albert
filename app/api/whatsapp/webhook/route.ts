@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { WhatsAppClient, createWhatsAppClient, getQuickButtons } from '@/lib/whatsapp';
+import { MetaWhatsAppClient, TwilioWhatsAppClient, createWhatsAppClient } from '@/lib/whatsapp';
 import { initDatabase, getPatientByPhone, createConversation, endConversation, logMessage } from '@/lib/db';
 import { generateMedicalResponse, analyzeConversation } from '@/lib/medical-ai';
 
@@ -12,7 +12,9 @@ const sessions: Map<string, {
 
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
-// GET: Webhook verification
+// ============================================
+// GET: Webhook verification (Meta only)
+// ============================================
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const mode = params.get('hub.mode');
@@ -22,41 +24,81 @@ export async function GET(request: NextRequest) {
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
 
   if (mode && token && challenge && verifyToken) {
-    const result = WhatsAppClient.verifyWebhook(mode, token, challenge, verifyToken);
-    if (result) return new NextResponse(result, { status: 200 });
+    const result = MetaWhatsAppClient.verifyWebhook(mode, token, challenge, verifyToken);
+    if (result) {
+      console.log('WhatsApp webhook verified');
+      return new NextResponse(result, { status: 200 });
+    }
   }
 
   return new NextResponse('Forbidden', { status: 403 });
 }
 
-// POST: Handle incoming messages
+// ============================================
+// POST: Handle incoming messages (Meta & Twilio)
+// ============================================
 export async function POST(request: NextRequest) {
   try {
     await initDatabase();
 
-    const body = await request.json();
-    const message = WhatsAppClient.parseWebhook(body);
+    const contentType = request.headers.get('content-type') || '';
+    const provider = process.env.WHATSAPP_PROVIDER || 'meta';
+    const isTwilio = contentType.includes('application/x-www-form-urlencoded') || provider === 'twilio';
 
+    // Parse body based on provider/content type
+    let message;
+
+    if (isTwilio) {
+      // Twilio sends form data
+      const formData = await request.formData();
+      const formObject: Record<string, string> = {};
+      formData.forEach((value, key) => {
+        formObject[key] = value.toString();
+      });
+      message = TwilioWhatsAppClient.parseWebhook(formObject);
+    } else {
+      // Meta sends JSON
+      const body = await request.json();
+      message = MetaWhatsAppClient.parseWebhook(body);
+    }
+
+    // Return empty response if no message (status update, etc.)
     if (!message) {
+      if (isTwilio) {
+        return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      }
       return NextResponse.json({ status: 'ok' });
     }
 
-    console.log('Received message from:', message.from);
+    console.log('Received message:', { from: message.from, text: message.text?.slice(0, 50), provider: isTwilio ? 'twilio' : 'meta' });
 
     // Look up patient
     const patient = await getPatientByPhone(message.from);
+    const whatsapp = createWhatsAppClient();
 
     if (!patient) {
-      const whatsapp = createWhatsAppClient();
       await whatsapp.sendMessage(
         message.from,
         "Hi! I don't recognize your number. If you're a patient of our practice, please contact us to get set up with your AI health companion."
       );
-      return NextResponse.json({ status: 'unknown' });
+
+      if (isTwilio) {
+        return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      }
+      return NextResponse.json({ status: 'unknown_patient' });
     }
 
     if (!patient.is_active) {
-      return NextResponse.json({ status: 'inactive' });
+      if (isTwilio) {
+        return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      }
+      return NextResponse.json({ status: 'inactive_patient' });
     }
 
     // Get or create session
@@ -81,34 +123,42 @@ export async function POST(request: NextRequest) {
     // Log incoming message
     await logMessage(patient.id, session.conversationId, 'inbound', message.text || `[${message.type}]`, message.messageId);
 
-    // Generate response
-    const whatsapp = createWhatsAppClient();
+    // Generate AI response
     let responseText: string;
 
     if (message.text) {
       const response = await generateMedicalResponse(patient.id, session.conversationId, message.text);
       responseText = response.message;
 
-      // Track messages
+      // Track messages for session
       session.messages.push({ role: 'user', content: message.text });
       session.messages.push({ role: 'assistant', content: responseText });
 
       // Log if alert created
       if (response.shouldAlert) {
-        console.log(`Alert created for ${patient.first_name}:`, response.alertDetails);
+        console.log(`⚠️ Alert created for ${patient.first_name}:`, response.alertDetails);
       }
     } else {
       responseText = "I can only read text messages right now. Could you type out what you wanted to share?";
     }
 
-    // Send response
+    // Send response via WhatsApp
     const result = await whatsapp.sendMessage(patient.phone_number, responseText);
 
     // Log outgoing message
     await logMessage(patient.id, session.conversationId, 'outbound', responseText, result.messageId);
 
-    // Mark as read
-    await whatsapp.markAsRead(message.messageId);
+    // Mark as read (Meta only)
+    if (!isTwilio) {
+      await whatsapp.markAsRead(message.messageId);
+    }
+
+    // Return appropriate response format
+    if (isTwilio) {
+      return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
 
     return NextResponse.json({ status: 'ok', messageId: result.messageId });
   } catch (error) {
@@ -117,7 +167,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Cleanup stale sessions
+// Cleanup stale sessions periodically
 setInterval(() => {
   const now = Date.now();
   for (const [patientId, session] of sessions.entries()) {

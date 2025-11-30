@@ -1,5 +1,6 @@
 // ============================================
 // WhatsApp Business API Integration
+// Supports: Meta Cloud API & Twilio
 // ============================================
 
 export interface IncomingMessage {
@@ -15,7 +16,7 @@ export interface IncomingMessage {
 // Meta WhatsApp Cloud API Client
 // ============================================
 
-export class WhatsAppClient {
+export class MetaWhatsAppClient {
   private accessToken: string;
   private phoneNumberId: string;
   private apiVersion = 'v18.0';
@@ -56,52 +57,8 @@ export class WhatsAppClient {
     }
   }
 
-  async sendButtons(
-    to: string,
-    bodyText: string,
-    buttons: Array<{ id: string; title: string }>
-  ): Promise<{ messageId: string; success: boolean }> {
-    const url = `${this.baseUrl}/${this.apiVersion}/${this.phoneNumberId}/messages`;
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: to.replace(/[^\d]/g, ''),
-          type: 'interactive',
-          interactive: {
-            type: 'button',
-            body: { text: bodyText },
-            action: {
-              buttons: buttons.slice(0, 3).map(b => ({
-                type: 'reply',
-                reply: { id: b.id, title: b.title.slice(0, 20) },
-              })),
-            },
-          },
-        }),
-      });
-
-      const data = await response.json();
-      return {
-        messageId: data.messages?.[0]?.id || '',
-        success: response.ok,
-      };
-    } catch (error) {
-      console.error('WhatsApp buttons error:', error);
-      return { messageId: '', success: false };
-    }
-  }
-
   async markAsRead(messageId: string): Promise<boolean> {
     const url = `${this.baseUrl}/${this.apiVersion}/${this.phoneNumberId}/messages`;
-
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -121,7 +78,6 @@ export class WhatsAppClient {
     }
   }
 
-  // Parse webhook payload
   static parseWebhook(body: unknown): IncomingMessage | null {
     try {
       const payload = body as {
@@ -134,8 +90,6 @@ export class WhatsAppClient {
                 timestamp: string;
                 type: string;
                 text?: { body: string };
-                button?: { payload: string; text: string };
-                interactive?: { button_reply?: { id: string; title: string } };
               }>;
             };
           }>;
@@ -145,26 +99,13 @@ export class WhatsAppClient {
       const message = payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
       if (!message) return null;
 
-      const parsed: IncomingMessage = {
+      return {
         messageId: message.id,
         from: message.from,
         timestamp: new Date(parseInt(message.timestamp) * 1000),
         type: message.type as IncomingMessage['type'],
+        text: message.text?.body,
       };
-
-      if (message.text) parsed.text = message.text.body;
-      if (message.button) {
-        parsed.type = 'button';
-        parsed.buttonPayload = message.button.payload;
-        parsed.text = message.button.text;
-      }
-      if (message.interactive?.button_reply) {
-        parsed.type = 'interactive';
-        parsed.buttonPayload = message.interactive.button_reply.id;
-        parsed.text = message.interactive.button_reply.title;
-      }
-
-      return parsed;
     } catch {
       return null;
     }
@@ -176,14 +117,118 @@ export class WhatsAppClient {
 }
 
 // ============================================
-// Create WhatsApp Client from Environment
+// Twilio WhatsApp Client
 // ============================================
 
-export function createWhatsAppClient(): WhatsAppClient {
-  return new WhatsAppClient(
+export class TwilioWhatsAppClient {
+  private accountSid: string;
+  private authToken: string;
+  private fromNumber: string;
+
+  constructor(accountSid: string, authToken: string, fromNumber: string) {
+    this.accountSid = accountSid;
+    this.authToken = authToken;
+    // Ensure whatsapp: prefix
+    this.fromNumber = fromNumber.startsWith('whatsapp:') ? fromNumber : `whatsapp:${fromNumber}`;
+  }
+
+  async sendMessage(to: string, text: string): Promise<{ messageId: string; success: boolean }> {
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/Messages.json`;
+
+    // Ensure whatsapp: prefix on recipient
+    const toNumber = to.startsWith('whatsapp:') ? to : `whatsapp:${to.replace(/[^\d+]/g, '')}`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Basic ' + Buffer.from(`${this.accountSid}:${this.authToken}`).toString('base64'),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          From: this.fromNumber,
+          To: toNumber,
+          Body: text,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error('Twilio error:', data);
+        return { messageId: '', success: false };
+      }
+
+      return {
+        messageId: data.sid || '',
+        success: true,
+      };
+    } catch (error) {
+      console.error('Twilio send error:', error);
+      return { messageId: '', success: false };
+    }
+  }
+
+  async markAsRead(_messageId: string): Promise<boolean> {
+    // Twilio doesn't have read receipts API
+    return true;
+  }
+
+  // Parse Twilio webhook (form data)
+  static parseWebhook(body: Record<string, string>): IncomingMessage | null {
+    try {
+      if (!body.From || !body.Body) return null;
+
+      return {
+        messageId: body.MessageSid || crypto.randomUUID(),
+        from: body.From.replace('whatsapp:', ''),
+        timestamp: new Date(),
+        type: 'text',
+        text: body.Body,
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+// ============================================
+// Unified WhatsApp Service
+// ============================================
+
+export type WhatsAppProvider = 'meta' | 'twilio';
+
+export interface WhatsAppService {
+  sendMessage(to: string, text: string): Promise<{ messageId: string; success: boolean }>;
+  markAsRead(messageId: string): Promise<boolean>;
+}
+
+export function createWhatsAppClient(): WhatsAppService {
+  const provider = (process.env.WHATSAPP_PROVIDER || 'meta') as WhatsAppProvider;
+
+  if (provider === 'twilio') {
+    return new TwilioWhatsAppClient(
+      process.env.TWILIO_ACCOUNT_SID!,
+      process.env.TWILIO_AUTH_TOKEN!,
+      process.env.TWILIO_WHATSAPP_NUMBER!
+    );
+  }
+
+  // Default to Meta
+  return new MetaWhatsAppClient(
     process.env.WHATSAPP_ACCESS_TOKEN!,
     process.env.WHATSAPP_PHONE_NUMBER_ID!
   );
+}
+
+// Parse incoming message based on provider
+export function parseIncomingMessage(body: unknown, contentType: string): IncomingMessage | null {
+  // Twilio sends form-urlencoded
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    return TwilioWhatsAppClient.parseWebhook(body as Record<string, string>);
+  }
+  // Meta sends JSON
+  return MetaWhatsAppClient.parseWebhook(body);
 }
 
 // ============================================
