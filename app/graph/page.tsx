@@ -7,7 +7,7 @@ import PasscodeGate from '@/components/PasscodeGate';
 interface GraphNode {
   id: string;
   label: string;
-  type: 'user' | 'echo' | 'topic' | 'memory' | 'milestone' | 'interest' | 'opinion' | 'pattern';
+  type: 'user' | 'echo' | 'topic' | 'memory' | 'milestone' | 'interest' | 'opinion' | 'pattern' | 'shared_moment' | 'quirk' | 'mood' | 'reflection' | 'favorite_topic';
   size: number;
   color: string;
   metadata?: Record<string, unknown>;
@@ -34,6 +34,10 @@ interface GraphData {
     relationshipStage: string;
     topInterests: string[];
     recentMilestones: string[];
+    currentMood: string;
+    moodIntensity: number;
+    quirksCount: number;
+    sharedMomentsCount: number;
   };
   selfModel: {
     warmth: number;
@@ -42,6 +46,10 @@ interface GraphData {
     depth: number;
     supportiveness: number;
     growthNarrative: string;
+    currentMood: string;
+    moodIntensity: number;
+    quirks: string[];
+    favoriteTopics: string[];
   };
 }
 
@@ -315,6 +323,20 @@ export default function KnowledgeGraphPage() {
                 <span className="text-gray-400">Relationship</span>
                 <span className="text-green-400 font-medium capitalize">{data?.stats.relationshipStage}</span>
               </div>
+              {data?.stats.currentMood && data.stats.currentMood !== 'neutral' && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Current Mood</span>
+                  <span className="text-purple-400 font-medium capitalize">{data.stats.currentMood}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-400">Quirks</span>
+                <span className="text-amber-400 font-medium">{data?.stats.quirksCount || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Shared Moments</span>
+                <span className="text-pink-400 font-medium">{data?.stats.sharedMomentsCount || 0}</span>
+              </div>
             </div>
           </div>
 
@@ -356,6 +378,11 @@ export default function KnowledgeGraphPage() {
                 { value: 'opinion', label: 'Opinions', color: 'bg-cyan-600' },
                 { value: 'milestone', label: 'Milestones', color: 'bg-emerald-600' },
                 { value: 'pattern', label: 'Patterns', color: 'bg-indigo-600' },
+                { value: 'shared_moment', label: 'Moments', color: 'bg-pink-400' },
+                { value: 'quirk', label: 'Quirks', color: 'bg-amber-500' },
+                { value: 'mood', label: 'Mood', color: 'bg-blue-400' },
+                { value: 'reflection', label: 'Reflections', color: 'bg-purple-400' },
+                { value: 'favorite_topic', label: 'Favorites', color: 'bg-red-500' },
               ].map(f => (
                 <button
                   key={f.value}
@@ -399,34 +426,50 @@ export default function KnowledgeGraphPage() {
           />
 
           {/* Legend */}
-          <div className="mt-4 flex flex-wrap gap-4 text-xs">
-            <div className="flex items-center gap-2">
+          <div className="mt-4 flex flex-wrap gap-3 text-xs">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-purple-500" />
               <span>Albert</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-green-500" />
               <span>User</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-blue-500" />
               <span>Memory</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-yellow-500" />
               <span>Topic</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-pink-500" />
               <span>Interest</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-cyan-500" />
               <span>Opinion</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-full bg-emerald-500" />
               <span>Milestone</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-pink-400" />
+              <span>Moment</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-amber-400" />
+              <span>Quirk</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-violet-400" />
+              <span>Reflection</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-red-500" />
+              <span>Favorite</span>
             </div>
           </div>
         </div>
