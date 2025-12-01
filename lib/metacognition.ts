@@ -105,14 +105,14 @@ ECHO'S CURRENT STATE:
 - Total conversations: ${conversationCount}
 - Total interaction time: ${totalMinutes} minutes
 - Personality profile:
-  - Warmth: ${selfModel.personality_warmth.toFixed(2)}
-  - Playfulness: ${selfModel.personality_playfulness.toFixed(2)}
-  - Curiosity: ${selfModel.personality_curiosity.toFixed(2)}
-  - Depth: ${selfModel.personality_depth.toFixed(2)}
-  - Supportiveness: ${selfModel.personality_supportiveness.toFixed(2)}
-- Current interests: ${selfModel.interests.map(i => i.topic).join(', ') || 'None yet'}
-- Current opinions: ${selfModel.opinions.map(o => `${o.topic}: ${o.stance}`).join('; ') || 'None yet'}
-- Recent milestones: ${recentMilestones.map(m => m.title).join(', ') || 'None yet'}
+  - Warmth: ${(selfModel.personality_warmth ?? 0.7).toFixed(2)}
+  - Playfulness: ${(selfModel.personality_playfulness ?? 0.6).toFixed(2)}
+  - Curiosity: ${(selfModel.personality_curiosity ?? 0.8).toFixed(2)}
+  - Depth: ${(selfModel.personality_depth ?? 0.5).toFixed(2)}
+  - Supportiveness: ${(selfModel.personality_supportiveness ?? 0.7).toFixed(2)}
+- Current interests: ${(selfModel.interests || []).map(i => i.topic).join(', ') || 'None yet'}
+- Current opinions: ${(selfModel.opinions || []).map(o => `${o.topic}: ${o.stance}`).join('; ') || 'None yet'}
+- Recent milestones: ${(recentMilestones || []).map(m => m.title).join(', ') || 'None yet'}
 
 YOUR TASK:
 Analyze this conversation deeply. Extract multiple types of learnings that will help Echo grow:
@@ -165,10 +165,19 @@ Respond in JSON format.`,
 
     const analysis: MetacognitiveAnalysis = JSON.parse(content);
 
+    // Ensure arrays exist with defaults
+    const episodicMemories = analysis.episodicMemories || [];
+    const userMemories = analysis.userMemories || [];
+    const echoMemories = analysis.echoMemories || [];
+    const milestones = analysis.milestones || [];
+    const proceduralInsights = analysis.proceduralInsights || [];
+    const interests = analysis.interests || [];
+    const opinions = analysis.opinions || [];
+
     // Process all the learnings
     await Promise.all([
       // Store episodic memories
-      ...analysis.episodicMemories.map(em =>
+      ...episodicMemories.map(em =>
         addEpisodicMemory(conversationId, em.eventType, em.summary, {
           emotionalValence: em.emotionalValence,
           significance: em.significance,
@@ -177,32 +186,32 @@ Respond in JSON format.`,
       ),
 
       // Store user memories via Mem0
-      ...analysis.userMemories.map(memory =>
+      ...userMemories.map(memory =>
         addMemory(memory, { source: 'metacognitive_reflection' })
       ),
 
       // Store Echo's self-memories via Mem0
-      ...analysis.echoMemories.map(memory =>
+      ...echoMemories.map(memory =>
         addEchoMemory(memory, { source: 'metacognitive_reflection' })
       ),
 
       // Store milestones
-      ...analysis.milestones.map(m =>
+      ...milestones.map(m =>
         addTimelineMilestone(m.type, m.title, m.description, {
           significance: m.significance,
         })
       ),
 
       // Store procedural insights
-      ...analysis.proceduralInsights.map(p =>
+      ...proceduralInsights.map(p =>
         addProceduralMemory(p.patternType, p.pattern, p.effectiveness)
       ),
 
       // Update interests
-      ...analysis.interests.map(i => addInterest(i.topic, i.strength)),
+      ...interests.map(i => addInterest(i.topic, i.strength)),
 
       // Update opinions
-      ...analysis.opinions.map(o => addOpinion(o.topic, o.stance)),
+      ...opinions.map(o => addOpinion(o.topic, o.stance)),
 
       // Store communication insight
       analysis.communicationInsight
