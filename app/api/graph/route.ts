@@ -143,7 +143,7 @@ export async function GET() {
     });
 
     // Add Echo's interests
-    selfModel.interests.forEach((interest, i) => {
+    (selfModel.interests || []).forEach((interest, i) => {
       const interestId = `interest_${i}`;
       nodes.push({
         id: interestId,
@@ -163,7 +163,7 @@ export async function GET() {
     });
 
     // Add Echo's opinions
-    selfModel.opinions.forEach((opinion, i) => {
+    (selfModel.opinions || []).forEach((opinion, i) => {
       const opinionId = `opinion_${i}`;
       nodes.push({
         id: opinionId,
@@ -240,11 +240,11 @@ export async function GET() {
         totalConversations: conversationCount,
         totalMinutes: Math.round(totalSeconds / 60),
         relationshipStage: growthMetrics?.relationship_stage || 'new',
-        topInterests: selfModel.interests
+        topInterests: (selfModel.interests || [])
           .sort((a, b) => b.strength - a.strength)
           .slice(0, 5)
           .map(i => i.topic),
-        recentMilestones: timeline.slice(0, 3).map(m => m.title),
+        recentMilestones: (timeline || []).slice(0, 3).map(m => m.title),
       },
       selfModel: {
         warmth: selfModel.personality_warmth,
