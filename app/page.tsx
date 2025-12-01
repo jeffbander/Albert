@@ -151,7 +151,11 @@ export default function Home() {
         startTimeRef.current = Date.now();
 
         // Create conversation in database
-        fetch('/api/conversation/context').catch(console.error);
+        fetch('/api/conversation/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: conversationIdRef.current }),
+        }).catch(console.error);
 
         setIsConnected(true);
         setState('listening');
