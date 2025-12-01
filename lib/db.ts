@@ -73,7 +73,42 @@ export interface EchoSelfModel {
   opinions: { topic: string; stance: string; formed_at: string }[];
   communication_insights: string[];
   growth_narrative: string;
+  current_mood: string;
+  mood_intensity: number;
+  mood_updated_at: Date | null;
+  favorite_topics: string[];
+  quirks: string[];
   last_updated: Date;
+}
+
+export interface SharedMoment {
+  id: string;
+  moment_type: 'inside_joke' | 'shared_story' | 'callback' | 'nickname' | 'ritual';
+  content: string;
+  context: string | null;
+  times_referenced: number;
+  last_referenced: Date;
+  created_at: Date;
+}
+
+export interface SelfReflection {
+  id: string;
+  reflection_type: 'daily' | 'post_conversation' | 'existential' | 'gratitude' | 'curiosity';
+  content: string;
+  emotional_state: string | null;
+  insights: string[];
+  questions: string[];
+  goals: string[];
+  created_at: Date;
+}
+
+export interface MoodEntry {
+  id: string;
+  mood: string;
+  intensity: number;
+  trigger: string | null;
+  conversation_id: string | null;
+  recorded_at: Date;
 }
 
 export async function initDatabase() {
@@ -170,8 +205,55 @@ export async function initDatabase() {
       opinions TEXT DEFAULT '[]',
       communication_insights TEXT DEFAULT '[]',
       growth_narrative TEXT DEFAULT '',
+      current_mood TEXT DEFAULT 'neutral',
+      mood_intensity REAL DEFAULT 0.5,
+      mood_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      favorite_topics TEXT DEFAULT '[]',
+      quirks TEXT DEFAULT '[]',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Inside jokes and shared moments with the user
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS shared_moments (
+      id TEXT PRIMARY KEY,
+      moment_type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      context TEXT,
+      times_referenced INTEGER DEFAULT 1,
+      last_referenced DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  // moment_type: 'inside_joke', 'shared_story', 'callback', 'nickname', 'ritual'
+
+  // Albert's self-reflection journal
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS self_reflections (
+      id TEXT PRIMARY KEY,
+      reflection_type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      emotional_state TEXT,
+      insights TEXT DEFAULT '[]',
+      questions TEXT DEFAULT '[]',
+      goals TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  // reflection_type: 'daily', 'post_conversation', 'existential', 'gratitude', 'curiosity'
+
+  // Mood history for tracking emotional patterns
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS mood_history (
+      id TEXT PRIMARY KEY,
+      mood TEXT NOT NULL,
+      intensity REAL DEFAULT 0.5,
+      trigger TEXT,
+      conversation_id TEXT,
+      recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
     )
   `);
 
@@ -545,6 +627,11 @@ export async function getEchoSelfModel(): Promise<EchoSelfModel> {
       opinions: [],
       communication_insights: [],
       growth_narrative: '',
+      current_mood: 'neutral',
+      mood_intensity: 0.5,
+      mood_updated_at: null,
+      favorite_topics: [],
+      quirks: [],
       last_updated: new Date(),
     };
   }
@@ -558,6 +645,11 @@ export async function getEchoSelfModel(): Promise<EchoSelfModel> {
     opinions: JSON.parse((row.opinions as string) || '[]'),
     communication_insights: JSON.parse((row.communication_insights as string) || '[]'),
     growth_narrative: (row.growth_narrative as string) || '',
+    current_mood: (row.current_mood as string) || 'neutral',
+    mood_intensity: (row.mood_intensity as number) ?? 0.5,
+    mood_updated_at: row.mood_updated_at ? new Date(row.mood_updated_at as string) : null,
+    favorite_topics: JSON.parse((row.favorite_topics as string) || '[]'),
+    quirks: JSON.parse((row.quirks as string) || '[]'),
     last_updated: new Date(row.last_updated as string),
   };
 }
@@ -674,6 +766,279 @@ export async function getTotalInteractionTime(): Promise<number> {
   const db = getDb();
   const result = await db.execute('SELECT COALESCE(SUM(duration_seconds), 0) as total FROM conversations');
   return (result.rows[0]?.total as number) || 0;
+}
+
+// ============================================
+// Shared Moments Functions (Inside Jokes, Callbacks)
+// ============================================
+
+export async function addSharedMoment(
+  momentType: SharedMoment['moment_type'],
+  content: string,
+  context?: string
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO shared_moments (id, moment_type, content, context)
+          VALUES (?, ?, ?, ?)`,
+    args: [id, momentType, content, context || null],
+  });
+  return id;
+}
+
+export async function getSharedMoments(limit: number = 20): Promise<SharedMoment[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM shared_moments ORDER BY times_referenced DESC, last_referenced DESC LIMIT ?',
+    args: [limit],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    moment_type: row.moment_type as SharedMoment['moment_type'],
+    content: row.content as string,
+    context: row.context as string | null,
+    times_referenced: row.times_referenced as number,
+    last_referenced: new Date(row.last_referenced as string),
+    created_at: new Date(row.created_at as string),
+  }));
+}
+
+export async function getSharedMomentsByType(
+  momentType: SharedMoment['moment_type']
+): Promise<SharedMoment[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM shared_moments WHERE moment_type = ? ORDER BY times_referenced DESC',
+    args: [momentType],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    moment_type: row.moment_type as SharedMoment['moment_type'],
+    content: row.content as string,
+    context: row.context as string | null,
+    times_referenced: row.times_referenced as number,
+    last_referenced: new Date(row.last_referenced as string),
+    created_at: new Date(row.created_at as string),
+  }));
+}
+
+export async function referenceSharedMoment(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE shared_moments
+          SET times_referenced = times_referenced + 1, last_referenced = CURRENT_TIMESTAMP
+          WHERE id = ?`,
+    args: [id],
+  });
+}
+
+export async function searchSharedMoments(query: string): Promise<SharedMoment[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM shared_moments
+          WHERE content LIKE ? OR context LIKE ?
+          ORDER BY times_referenced DESC LIMIT 10`,
+    args: [`%${query}%`, `%${query}%`],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    moment_type: row.moment_type as SharedMoment['moment_type'],
+    content: row.content as string,
+    context: row.context as string | null,
+    times_referenced: row.times_referenced as number,
+    last_referenced: new Date(row.last_referenced as string),
+    created_at: new Date(row.created_at as string),
+  }));
+}
+
+// ============================================
+// Self-Reflection Functions (Albert's Journal)
+// ============================================
+
+export async function addSelfReflection(
+  reflectionType: SelfReflection['reflection_type'],
+  content: string,
+  options: {
+    emotionalState?: string;
+    insights?: string[];
+    questions?: string[];
+    goals?: string[];
+  } = {}
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO self_reflections (id, reflection_type, content, emotional_state, insights, questions, goals)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      reflectionType,
+      content,
+      options.emotionalState || null,
+      JSON.stringify(options.insights || []),
+      JSON.stringify(options.questions || []),
+      JSON.stringify(options.goals || []),
+    ],
+  });
+  return id;
+}
+
+export async function getRecentReflections(limit: number = 10): Promise<SelfReflection[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM self_reflections ORDER BY created_at DESC LIMIT ?',
+    args: [limit],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    reflection_type: row.reflection_type as SelfReflection['reflection_type'],
+    content: row.content as string,
+    emotional_state: row.emotional_state as string | null,
+    insights: JSON.parse((row.insights as string) || '[]'),
+    questions: JSON.parse((row.questions as string) || '[]'),
+    goals: JSON.parse((row.goals as string) || '[]'),
+    created_at: new Date(row.created_at as string),
+  }));
+}
+
+export async function getReflectionsByType(
+  reflectionType: SelfReflection['reflection_type'],
+  limit: number = 10
+): Promise<SelfReflection[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM self_reflections WHERE reflection_type = ? ORDER BY created_at DESC LIMIT ?',
+    args: [reflectionType, limit],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    reflection_type: row.reflection_type as SelfReflection['reflection_type'],
+    content: row.content as string,
+    emotional_state: row.emotional_state as string | null,
+    insights: JSON.parse((row.insights as string) || '[]'),
+    questions: JSON.parse((row.questions as string) || '[]'),
+    goals: JSON.parse((row.goals as string) || '[]'),
+    created_at: new Date(row.created_at as string),
+  }));
+}
+
+export async function getLatestReflection(): Promise<SelfReflection | null> {
+  const db = getDb();
+  const result = await db.execute(
+    'SELECT * FROM self_reflections ORDER BY created_at DESC LIMIT 1'
+  );
+  if (!result.rows[0]) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id as string,
+    reflection_type: row.reflection_type as SelfReflection['reflection_type'],
+    content: row.content as string,
+    emotional_state: row.emotional_state as string | null,
+    insights: JSON.parse((row.insights as string) || '[]'),
+    questions: JSON.parse((row.questions as string) || '[]'),
+    goals: JSON.parse((row.goals as string) || '[]'),
+    created_at: new Date(row.created_at as string),
+  };
+}
+
+// ============================================
+// Mood Functions
+// ============================================
+
+export async function updateMood(
+  mood: string,
+  intensity: number,
+  trigger?: string,
+  conversationId?: string
+): Promise<void> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  // Record in mood history
+  await db.execute({
+    sql: `INSERT INTO mood_history (id, mood, intensity, trigger, conversation_id)
+          VALUES (?, ?, ?, ?, ?)`,
+    args: [id, mood, intensity, trigger || null, conversationId || null],
+  });
+
+  // Update current mood in self model
+  await db.execute({
+    sql: `UPDATE echo_self_model
+          SET current_mood = ?, mood_intensity = ?, mood_updated_at = CURRENT_TIMESTAMP
+          WHERE id = 'singleton'`,
+    args: [mood, intensity],
+  });
+}
+
+export async function getMoodHistory(limit: number = 20): Promise<MoodEntry[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM mood_history ORDER BY recorded_at DESC LIMIT ?',
+    args: [limit],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    mood: row.mood as string,
+    intensity: row.intensity as number,
+    trigger: row.trigger as string | null,
+    conversation_id: row.conversation_id as string | null,
+    recorded_at: new Date(row.recorded_at as string),
+  }));
+}
+
+export async function getMoodTrends(days: number = 7): Promise<{ mood: string; count: number; avgIntensity: number }[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT mood, COUNT(*) as count, AVG(intensity) as avg_intensity
+          FROM mood_history
+          WHERE recorded_at >= datetime('now', '-' || ? || ' days')
+          GROUP BY mood
+          ORDER BY count DESC`,
+    args: [days],
+  });
+  return result.rows.map(row => ({
+    mood: row.mood as string,
+    count: row.count as number,
+    avgIntensity: row.avg_intensity as number,
+  }));
+}
+
+export async function getCurrentMood(): Promise<{ mood: string; intensity: number; updatedAt: Date | null }> {
+  const model = await getEchoSelfModel();
+  return {
+    mood: model.current_mood,
+    intensity: model.mood_intensity,
+    updatedAt: model.mood_updated_at,
+  };
+}
+
+// ============================================
+// Quirks and Favorite Topics
+// ============================================
+
+export async function addQuirk(quirk: string): Promise<void> {
+  const db = getDb();
+  const model = await getEchoSelfModel();
+  if (!model.quirks.includes(quirk)) {
+    const quirks = [...model.quirks, quirk].slice(-10); // Keep max 10 quirks
+    await db.execute({
+      sql: `UPDATE echo_self_model SET quirks = ? WHERE id = 'singleton'`,
+      args: [JSON.stringify(quirks)],
+    });
+  }
+}
+
+export async function addFavoriteTopic(topic: string): Promise<void> {
+  const db = getDb();
+  const model = await getEchoSelfModel();
+  if (!model.favorite_topics.includes(topic)) {
+    const topics = [...model.favorite_topics, topic].slice(-15); // Keep max 15 topics
+    await db.execute({
+      sql: `UPDATE echo_self_model SET favorite_topics = ? WHERE id = 'singleton'`,
+      args: [JSON.stringify(topics)],
+    });
+  }
 }
 
 export default getDb;

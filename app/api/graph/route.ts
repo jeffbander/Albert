@@ -7,13 +7,16 @@ import {
   getLatestGrowthMetrics,
   getConversationCount,
   getTotalInteractionTime,
+  getSharedMoments,
+  getRecentReflections,
+  getMoodHistory,
 } from '@/lib/db';
 import { getRecentMemories, getEchoMemories } from '@/lib/mem0';
 
 export interface GraphNode {
   id: string;
   label: string;
-  type: 'user' | 'echo' | 'topic' | 'memory' | 'milestone' | 'interest' | 'opinion' | 'pattern';
+  type: 'user' | 'echo' | 'topic' | 'memory' | 'milestone' | 'interest' | 'opinion' | 'pattern' | 'shared_moment' | 'quirk' | 'mood' | 'reflection' | 'favorite_topic';
   size: number;
   color: string;
   metadata?: Record<string, unknown>;
@@ -36,6 +39,10 @@ export interface GraphData {
     relationshipStage: string;
     topInterests: string[];
     recentMilestones: string[];
+    currentMood: string;
+    moodIntensity: number;
+    quirksCount: number;
+    sharedMomentsCount: number;
   };
   selfModel: {
     warmth: number;
@@ -44,6 +51,10 @@ export interface GraphData {
     depth: number;
     supportiveness: number;
     growthNarrative: string;
+    currentMood: string;
+    moodIntensity: number;
+    quirks: string[];
+    favoriteTopics: string[];
   };
 }
 
@@ -60,6 +71,9 @@ export async function GET() {
       growthMetrics,
       conversationCount,
       totalSeconds,
+      sharedMoments,
+      recentReflections,
+      moodHistory,
     ] = await Promise.all([
       getRecentMemories(50),
       getEchoMemories(50),
@@ -70,6 +84,9 @@ export async function GET() {
       getLatestGrowthMetrics(),
       getConversationCount(),
       getTotalInteractionTime(),
+      getSharedMoments(20),
+      getRecentReflections(5),
+      getMoodHistory(10),
     ]);
 
     const nodes: GraphNode[] = [];
@@ -231,6 +248,136 @@ export async function GET() {
       });
     });
 
+    // Add shared moments (inside jokes, callbacks, etc.)
+    (sharedMoments || []).forEach((moment, i) => {
+      const momentId = `moment_${i}`;
+      const typeEmoji = moment.moment_type === 'inside_joke' ? '😄' :
+                       moment.moment_type === 'callback' ? '🔄' :
+                       moment.moment_type === 'nickname' ? '👤' :
+                       moment.moment_type === 'ritual' ? '🔁' : '📖';
+      nodes.push({
+        id: momentId,
+        label: `${typeEmoji} ${moment.content.slice(0, 35)}...`,
+        type: 'shared_moment',
+        size: 12 + Math.min(moment.times_referenced * 2, 10),
+        color: '#f472b6', // Pink for shared moments
+        metadata: {
+          type: moment.moment_type,
+          content: moment.content,
+          context: moment.context,
+          timesReferenced: moment.times_referenced,
+          created: moment.created_at,
+        },
+      });
+
+      // Connect to both Albert and user
+      edges.push({
+        source: 'echo',
+        target: momentId,
+        label: 'shares',
+        strength: 0.8,
+      });
+      edges.push({
+        source: 'user',
+        target: momentId,
+        label: 'shares',
+        strength: 0.8,
+      });
+    });
+
+    // Add quirks
+    (selfModel.quirks || []).forEach((quirk, i) => {
+      const quirkId = `quirk_${i}`;
+      nodes.push({
+        id: quirkId,
+        label: `✨ ${quirk}`,
+        type: 'quirk',
+        size: 14,
+        color: '#fbbf24', // Amber for quirks
+        metadata: { quirk },
+      });
+
+      edges.push({
+        source: 'echo',
+        target: quirkId,
+        label: 'has quirk',
+        strength: 0.6,
+      });
+    });
+
+    // Add favorite topics
+    (selfModel.favorite_topics || []).forEach((topic, i) => {
+      const topicId = `fav_topic_${i}`;
+      nodes.push({
+        id: topicId,
+        label: `❤️ ${topic}`,
+        type: 'favorite_topic',
+        size: 16,
+        color: '#ef4444', // Red for favorites
+        metadata: { topic },
+      });
+
+      edges.push({
+        source: 'echo',
+        target: topicId,
+        label: 'loves',
+        strength: 0.9,
+      });
+    });
+
+    // Add mood node (current mood)
+    if (selfModel.current_mood && selfModel.current_mood !== 'neutral') {
+      const moodId = 'current_mood';
+      const moodEmoji = getMoodEmoji(selfModel.current_mood);
+      nodes.push({
+        id: moodId,
+        label: `${moodEmoji} ${selfModel.current_mood}`,
+        type: 'mood',
+        size: 18 + (selfModel.mood_intensity ?? 0.5) * 10,
+        color: getMoodColor(selfModel.current_mood),
+        metadata: {
+          mood: selfModel.current_mood,
+          intensity: selfModel.mood_intensity,
+          updatedAt: selfModel.mood_updated_at,
+        },
+      });
+
+      edges.push({
+        source: 'echo',
+        target: moodId,
+        label: 'feels',
+        strength: selfModel.mood_intensity ?? 0.5,
+      });
+    }
+
+    // Add recent reflections
+    recentReflections.slice(0, 3).forEach((reflection, i) => {
+      const reflectionId = `reflection_${i}`;
+      nodes.push({
+        id: reflectionId,
+        label: `💭 ${reflection.content.slice(0, 40)}...`,
+        type: 'reflection',
+        size: 14,
+        color: '#a78bfa', // Light purple for reflections
+        metadata: {
+          type: reflection.reflection_type,
+          content: reflection.content,
+          emotionalState: reflection.emotional_state,
+          insights: reflection.insights,
+          questions: reflection.questions,
+          goals: reflection.goals,
+          created: reflection.created_at,
+        },
+      });
+
+      edges.push({
+        source: 'echo',
+        target: reflectionId,
+        label: 'reflected',
+        strength: 0.5,
+      });
+    });
+
     // Build response
     const graphData: GraphData = {
       nodes,
@@ -245,6 +392,10 @@ export async function GET() {
           .slice(0, 5)
           .map(i => i.topic),
         recentMilestones: (timeline || []).slice(0, 3).map(m => m.title),
+        currentMood: selfModel.current_mood || 'neutral',
+        moodIntensity: selfModel.mood_intensity ?? 0.5,
+        quirksCount: (selfModel.quirks || []).length,
+        sharedMomentsCount: (sharedMoments || []).length,
       },
       selfModel: {
         warmth: selfModel.personality_warmth,
@@ -253,6 +404,10 @@ export async function GET() {
         depth: selfModel.personality_depth,
         supportiveness: selfModel.personality_supportiveness,
         growthNarrative: selfModel.growth_narrative,
+        currentMood: selfModel.current_mood || 'neutral',
+        moodIntensity: selfModel.mood_intensity ?? 0.5,
+        quirks: selfModel.quirks || [],
+        favoriteTopics: selfModel.favorite_topics || [],
       },
     };
 
@@ -292,4 +447,46 @@ function extractTopics(text: string): string[] {
   });
 
   return [...new Set(topics)].slice(0, 3); // Limit to 3 topics per memory
+}
+
+function getMoodEmoji(mood: string): string {
+  const moodEmojis: Record<string, string> = {
+    curious: '🧐',
+    joyful: '😊',
+    contemplative: '🤔',
+    energized: '⚡',
+    peaceful: '😌',
+    pensive: '💭',
+    amused: '😄',
+    warm: '🥰',
+    excited: '🎉',
+    playful: '😜',
+    thoughtful: '🧠',
+    serene: '🌸',
+    inspired: '✨',
+    cozy: '☕',
+    grateful: '🙏',
+  };
+  return moodEmojis[mood.toLowerCase()] || '😐';
+}
+
+function getMoodColor(mood: string): string {
+  const moodColors: Record<string, string> = {
+    curious: '#3b82f6',     // Blue
+    joyful: '#fbbf24',      // Yellow
+    contemplative: '#8b5cf6', // Purple
+    energized: '#f97316',   // Orange
+    peaceful: '#22c55e',    // Green
+    pensive: '#6366f1',     // Indigo
+    amused: '#ec4899',      // Pink
+    warm: '#f43f5e',        // Rose
+    excited: '#eab308',     // Bright yellow
+    playful: '#14b8a6',     // Teal
+    thoughtful: '#8b5cf6',  // Purple
+    serene: '#06b6d4',      // Cyan
+    inspired: '#f59e0b',    // Amber
+    cozy: '#a16207',        // Brown
+    grateful: '#10b981',    // Emerald
+  };
+  return moodColors[mood.toLowerCase()] || '#6b7280'; // Gray default
 }

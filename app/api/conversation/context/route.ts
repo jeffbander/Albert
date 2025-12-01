@@ -7,6 +7,8 @@ import {
   getTotalInteractionTime,
   getLatestGrowthMetrics,
   getTimeline,
+  getSharedMoments,
+  getRecentReflections,
 } from '@/lib/db';
 import { getRecentMemories } from '@/lib/mem0';
 import {
@@ -30,6 +32,8 @@ export async function GET() {
       totalSeconds,
       latestMetrics,
       recentMilestones,
+      sharedMoments,
+      recentReflections,
     ] = await Promise.all([
       getLastConversation(),
       getRecentMemories(5),
@@ -38,6 +42,8 @@ export async function GET() {
       getTotalInteractionTime(),
       getLatestGrowthMetrics(),
       getTimeline(3),
+      getSharedMoments(5),
+      getRecentReflections(2),
     ]);
 
     const lastConversationTime = lastConversation?.ended_at
@@ -53,6 +59,11 @@ export async function GET() {
       memoryStrings
     );
 
+    // Extract insights, questions, and goals from recent reflections
+    const latestReflection = recentReflections[0];
+    const allQuestions = recentReflections.flatMap(r => r.questions || []).slice(0, 3);
+    const allGoals = recentReflections.flatMap(r => r.goals || []).slice(0, 3);
+
     // Build self-awareness context
     const selfAwareness: SelfAwarenessContext = {
       conversationCount,
@@ -67,6 +78,16 @@ export async function GET() {
       growthNarrative: selfModel.growth_narrative
         ? selfModel.growth_narrative.split('\n\n').pop()?.replace(/^\[.*?\]\s*/, '')
         : undefined,
+      currentMood: selfModel.current_mood,
+      moodIntensity: selfModel.mood_intensity,
+      quirks: selfModel.quirks || [],
+      favoriteTopics: selfModel.favorite_topics || [],
+      insideJokes: (sharedMoments || [])
+        .filter(m => m.moment_type === 'inside_joke' || m.moment_type === 'callback')
+        .map(m => m.content),
+      recentReflection: latestReflection?.content,
+      existentialQuestions: allQuestions,
+      currentGoals: allGoals,
     };
 
     const systemPrompt = buildContextualPrompt(
