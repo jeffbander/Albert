@@ -58,11 +58,11 @@ export async function GET() {
       conversationCount,
       totalMinutes: Math.round(totalSeconds / 60),
       relationshipStage: latestMetrics?.relationship_stage || 'new',
-      interests: selfModel.interests
+      interests: (selfModel.interests || [])
         .sort((a, b) => b.strength - a.strength)
         .slice(0, 5)
         .map(i => i.topic),
-      recentMilestones: recentMilestones.map(m => m.title),
+      recentMilestones: (recentMilestones || []).map(m => m.title),
       personalityDescription: describePersonality(selfModel),
       growthNarrative: selfModel.growth_narrative
         ? selfModel.growth_narrative.split('\n\n').pop()?.replace(/^\[.*?\]\s*/, '')
