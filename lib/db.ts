@@ -111,6 +111,18 @@ export interface MoodEntry {
   recorded_at: Date;
 }
 
+export interface SpeakerProfile {
+  id: string;
+  name: string;
+  voiceprint: string; // Base64 encoded voiceprint from Eagle
+  enrolled_at: Date;
+  last_seen: Date;
+  total_conversations: number;
+  total_minutes: number;
+  relationship_notes: string | null;
+  preferences: Record<string, unknown>;
+}
+
 export async function initDatabase() {
   const db = getDb();
 
@@ -254,6 +266,21 @@ export async function initDatabase() {
       conversation_id TEXT,
       recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    )
+  `);
+
+  // Speaker profiles for voice identification
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS speaker_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      voiceprint TEXT NOT NULL,
+      enrolled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      total_conversations INTEGER DEFAULT 0,
+      total_minutes INTEGER DEFAULT 0,
+      relationship_notes TEXT,
+      preferences TEXT DEFAULT '{}'
     )
   `);
 
@@ -1039,6 +1066,142 @@ export async function addFavoriteTopic(topic: string): Promise<void> {
       args: [JSON.stringify(topics)],
     });
   }
+}
+
+// ============================================
+// Speaker Profile Functions (Voice ID)
+// ============================================
+
+export async function createSpeakerProfile(
+  name: string,
+  voiceprint: string
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO speaker_profiles (id, name, voiceprint)
+          VALUES (?, ?, ?)`,
+    args: [id, name, voiceprint],
+  });
+  return id;
+}
+
+export async function getSpeakerProfile(id: string): Promise<SpeakerProfile | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM speaker_profiles WHERE id = ?',
+    args: [id],
+  });
+  if (!result.rows[0]) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    voiceprint: row.voiceprint as string,
+    enrolled_at: new Date(row.enrolled_at as string),
+    last_seen: new Date(row.last_seen as string),
+    total_conversations: row.total_conversations as number,
+    total_minutes: row.total_minutes as number,
+    relationship_notes: row.relationship_notes as string | null,
+    preferences: JSON.parse((row.preferences as string) || '{}'),
+  };
+}
+
+export async function getSpeakerByName(name: string): Promise<SpeakerProfile | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM speaker_profiles WHERE name = ? COLLATE NOCASE LIMIT 1',
+    args: [name],
+  });
+  if (!result.rows[0]) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    voiceprint: row.voiceprint as string,
+    enrolled_at: new Date(row.enrolled_at as string),
+    last_seen: new Date(row.last_seen as string),
+    total_conversations: row.total_conversations as number,
+    total_minutes: row.total_minutes as number,
+    relationship_notes: row.relationship_notes as string | null,
+    preferences: JSON.parse((row.preferences as string) || '{}'),
+  };
+}
+
+export async function getAllSpeakerProfiles(): Promise<SpeakerProfile[]> {
+  const db = getDb();
+  const result = await db.execute(
+    'SELECT * FROM speaker_profiles ORDER BY last_seen DESC'
+  );
+  return result.rows.map(row => ({
+    id: row.id as string,
+    name: row.name as string,
+    voiceprint: row.voiceprint as string,
+    enrolled_at: new Date(row.enrolled_at as string),
+    last_seen: new Date(row.last_seen as string),
+    total_conversations: row.total_conversations as number,
+    total_minutes: row.total_minutes as number,
+    relationship_notes: row.relationship_notes as string | null,
+    preferences: JSON.parse((row.preferences as string) || '{}'),
+  }));
+}
+
+export async function updateSpeakerLastSeen(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE speaker_profiles
+          SET last_seen = CURRENT_TIMESTAMP, total_conversations = total_conversations + 1
+          WHERE id = ?`,
+    args: [id],
+  });
+}
+
+export async function updateSpeakerMinutes(id: string, minutes: number): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE speaker_profiles
+          SET total_minutes = total_minutes + ?
+          WHERE id = ?`,
+    args: [minutes, id],
+  });
+}
+
+export async function updateSpeakerProfile(
+  id: string,
+  updates: Partial<Pick<SpeakerProfile, 'name' | 'relationship_notes' | 'preferences'>>
+): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = [];
+  const args: (string | number)[] = [];
+
+  if (updates.name !== undefined) {
+    setClauses.push('name = ?');
+    args.push(updates.name);
+  }
+  if (updates.relationship_notes !== undefined) {
+    setClauses.push('relationship_notes = ?');
+    args.push(updates.relationship_notes || '');
+  }
+  if (updates.preferences !== undefined) {
+    setClauses.push('preferences = ?');
+    args.push(JSON.stringify(updates.preferences));
+  }
+
+  if (setClauses.length > 0) {
+    args.push(id);
+    await db.execute({
+      sql: `UPDATE speaker_profiles SET ${setClauses.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+}
+
+export async function deleteSpeakerProfile(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM speaker_profiles WHERE id = ?',
+    args: [id],
+  });
 }
 
 export default getDb;
