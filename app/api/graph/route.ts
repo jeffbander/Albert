@@ -64,7 +64,7 @@ export async function GET() {
     const [
       userMemories,
       echoMemories,
-      selfModel,
+      selfModelRaw,
       timeline,
       episodicMemories,
       proceduralMemories,
@@ -88,6 +88,27 @@ export async function GET() {
       getRecentReflections(5),
       getMoodHistory(10),
     ]);
+
+    // Ensure selfModel has default values if null
+    const selfModel = selfModelRaw || {
+      interests: [],
+      opinions: [],
+      quirks: [],
+      favorite_topics: [],
+      current_mood: 'neutral',
+      mood_intensity: 0.5,
+      personality_warmth: 0.5,
+      personality_playfulness: 0.5,
+      personality_curiosity: 0.5,
+      personality_depth: 0.5,
+      personality_supportiveness: 0.5,
+      growth_narrative: '',
+      mood_updated_at: null,
+    };
+
+    // Mark unused variables to avoid linter warnings
+    void episodicMemories;
+    void moodHistory;
 
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
@@ -118,11 +139,12 @@ export async function GET() {
     });
 
     // Process user memories - extract topics
-    userMemories.forEach((mem, i) => {
+    (userMemories || []).forEach((mem, i) => {
       const memId = `mem_${i}`;
+      const memoryText = mem.memory || '';
       nodes.push({
         id: memId,
-        label: mem.memory.length > 50 ? mem.memory.slice(0, 50) + '...' : mem.memory,
+        label: memoryText.length > 50 ? memoryText.slice(0, 50) + '...' : memoryText,
         type: 'memory',
         size: 15,
         color: '#3b82f6',
@@ -136,7 +158,7 @@ export async function GET() {
       });
 
       // Extract topics from memory
-      const topics = extractTopics(mem.memory);
+      const topics = extractTopics(memoryText);
       topics.forEach(topic => {
         topicCounts[topic] = (topicCounts[topic] || 0) + 1;
         const topicId = `topic_${topic.toLowerCase().replace(/\s+/g, '_')}`;
@@ -182,9 +204,10 @@ export async function GET() {
     // Add Echo's opinions
     (selfModel.opinions || []).forEach((opinion, i) => {
       const opinionId = `opinion_${i}`;
+      const stanceText = opinion.stance || '';
       nodes.push({
         id: opinionId,
-        label: `${opinion.topic}: ${opinion.stance.slice(0, 30)}...`,
+        label: `${opinion.topic || 'Unknown'}: ${stanceText.length > 30 ? stanceText.slice(0, 30) + '...' : stanceText}`,
         type: 'opinion',
         size: 18,
         color: '#06b6d4',
@@ -200,13 +223,13 @@ export async function GET() {
     });
 
     // Add milestones
-    timeline.forEach((milestone, i) => {
+    (timeline || []).forEach((milestone, i) => {
       const msId = `milestone_${i}`;
       nodes.push({
         id: msId,
-        label: milestone.title,
+        label: milestone.title || 'Milestone',
         type: 'milestone',
-        size: 12 + milestone.significance * 12,
+        size: 12 + (milestone.significance || 0) * 12,
         color: '#10b981',
         metadata: {
           type: milestone.milestone_type,
@@ -219,18 +242,19 @@ export async function GET() {
         source: 'echo',
         target: msId,
         label: 'achieved',
-        strength: milestone.significance,
+        strength: milestone.significance || 0,
       });
     });
 
     // Add procedural patterns
-    proceduralMemories.slice(0, 10).forEach((pattern, i) => {
+    (proceduralMemories || []).slice(0, 10).forEach((pattern, i) => {
       const patternId = `pattern_${i}`;
+      const patternText = pattern.pattern || '';
       nodes.push({
         id: patternId,
-        label: pattern.pattern.slice(0, 40) + '...',
+        label: patternText.length > 40 ? patternText.slice(0, 40) + '...' : patternText,
         type: 'pattern',
-        size: 10 + pattern.effectiveness * 10,
+        size: 10 + (pattern.effectiveness || 0) * 10,
         color: '#6366f1',
         metadata: {
           type: pattern.pattern_type,
@@ -244,7 +268,7 @@ export async function GET() {
         source: 'echo',
         target: patternId,
         label: 'learned',
-        strength: pattern.effectiveness,
+        strength: pattern.effectiveness || 0,
       });
     });
 
@@ -255,11 +279,12 @@ export async function GET() {
                        moment.moment_type === 'callback' ? '🔄' :
                        moment.moment_type === 'nickname' ? '👤' :
                        moment.moment_type === 'ritual' ? '🔁' : '📖';
+      const momentContent = moment.content || '';
       nodes.push({
         id: momentId,
-        label: `${typeEmoji} ${moment.content.slice(0, 35)}...`,
+        label: `${typeEmoji} ${momentContent.length > 35 ? momentContent.slice(0, 35) + '...' : momentContent}`,
         type: 'shared_moment',
-        size: 12 + Math.min(moment.times_referenced * 2, 10),
+        size: 12 + Math.min((moment.times_referenced || 0) * 2, 10),
         color: '#f472b6', // Pink for shared moments
         metadata: {
           type: moment.moment_type,
@@ -351,11 +376,12 @@ export async function GET() {
     }
 
     // Add recent reflections
-    recentReflections.slice(0, 3).forEach((reflection, i) => {
+    (recentReflections || []).slice(0, 3).forEach((reflection, i) => {
       const reflectionId = `reflection_${i}`;
+      const reflectionContent = reflection.content || '';
       nodes.push({
         id: reflectionId,
-        label: `💭 ${reflection.content.slice(0, 40)}...`,
+        label: `💭 ${reflectionContent.length > 40 ? reflectionContent.slice(0, 40) + '...' : reflectionContent}`,
         type: 'reflection',
         size: 14,
         color: '#a78bfa', // Light purple for reflections
@@ -383,15 +409,15 @@ export async function GET() {
       nodes,
       edges,
       stats: {
-        totalMemories: userMemories.length + echoMemories.length,
-        totalConversations: conversationCount,
-        totalMinutes: Math.round(totalSeconds / 60),
+        totalMemories: (userMemories || []).length + (echoMemories || []).length,
+        totalConversations: conversationCount || 0,
+        totalMinutes: Math.round((totalSeconds || 0) / 60),
         relationshipStage: growthMetrics?.relationship_stage || 'new',
         topInterests: (selfModel.interests || [])
-          .sort((a, b) => b.strength - a.strength)
+          .sort((a, b) => (b.strength || 0) - (a.strength || 0))
           .slice(0, 5)
-          .map(i => i.topic),
-        recentMilestones: (timeline || []).slice(0, 3).map(m => m.title),
+          .map(i => i.topic || ''),
+        recentMilestones: (timeline || []).slice(0, 3).map(m => m.title || ''),
         currentMood: selfModel.current_mood || 'neutral',
         moodIntensity: selfModel.mood_intensity ?? 0.5,
         quirksCount: (selfModel.quirks || []).length,
