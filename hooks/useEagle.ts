@@ -107,36 +107,56 @@ export function useEagle() {
       });
 
       // Set up microphone processing
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        }
+      });
       mediaStreamRef.current = stream;
 
-      audioContextRef.current = new AudioContext({ sampleRate: profilerRef.current.sampleRate });
+      // Eagle requires 16kHz sample rate
+      const targetSampleRate = profilerRef.current.sampleRate || 16000;
+      audioContextRef.current = new AudioContext({ sampleRate: targetSampleRate });
       const source = audioContextRef.current.createMediaStreamSource(stream);
 
       // Use ScriptProcessor for audio processing
+      // Eagle expects 512 samples per frame at 16kHz
+      const frameLength = profilerRef.current.frameLength || 512;
       const bufferSize = 4096;
       processorRef.current = audioContextRef.current.createScriptProcessor(bufferSize, 1, 1);
+
+      // Buffer to accumulate samples for proper frame size
+      let audioBuffer: number[] = [];
 
       processorRef.current.onaudioprocess = async (e: AudioProcessingEvent) => {
         if (!profilerRef.current || !isEnrollingRef.current) return;
 
         try {
           const inputData = e.inputBuffer.getChannelData(0);
-          // Convert Float32 to Int16
-          const pcm = new Int16Array(inputData.length);
+
+          // Accumulate samples
           for (let i = 0; i < inputData.length; i++) {
-            pcm[i] = Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32768)));
+            audioBuffer.push(Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32768))));
           }
 
-          const result = await profilerRef.current.enroll(pcm);
+          // Process complete frames
+          while (audioBuffer.length >= frameLength) {
+            const frame = new Int16Array(audioBuffer.splice(0, frameLength));
+            const result = await profilerRef.current.enroll(frame);
 
-          setEnrollmentState(prev => ({
-            ...prev,
-            progress: result.percentage,
-            feedback: getEnrollmentFeedback(result.percentage),
-          }));
+            if (result.percentage > 0) {
+              setEnrollmentState(prev => ({
+                ...prev,
+                progress: result.percentage,
+                feedback: getEnrollmentFeedback(result.percentage),
+              }));
+            }
+          }
         } catch (err) {
-          // Ignore errors during enrollment (often due to short audio)
+          // Ignore errors during enrollment (often due to silence/noise)
           console.debug('Enrollment frame error:', err);
         }
       };
