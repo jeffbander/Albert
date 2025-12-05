@@ -311,15 +311,35 @@ export function useEagle() {
     }
 
     try {
-      console.log('[Eagle] Processing audio...');
-      const scores = await eagleRef.current.process(audioData);
-      console.log('[Eagle] Scores:', scores);
+      // Eagle requires processing in 512-sample frames
+      const frameLength = 512;
+      const numSpeakers = speakersRef.current.length;
+      const accumulatedScores = new Array(numSpeakers).fill(0);
+      let frameCount = 0;
+
+      console.log('[Eagle] Processing audio in', Math.floor(audioData.length / frameLength), 'frames...');
+
+      // Process audio in 512-sample chunks
+      for (let i = 0; i + frameLength <= audioData.length; i += frameLength) {
+        const frame = audioData.slice(i, i + frameLength);
+        const scores = await eagleRef.current.process(frame);
+
+        // Accumulate scores for each speaker
+        scores.forEach((score: number, index: number) => {
+          accumulatedScores[index] += score;
+        });
+        frameCount++;
+      }
+
+      // Average the scores
+      const averageScores = accumulatedScores.map(s => s / frameCount);
+      console.log('[Eagle] Average scores:', averageScores, 'over', frameCount, 'frames');
 
       // Find best match
       let bestIndex = -1;
       let bestScore = 0;
 
-      scores.forEach((score: number, index: number) => {
+      averageScores.forEach((score: number, index: number) => {
         if (score > bestScore) {
           bestScore = score;
           bestIndex = index;
