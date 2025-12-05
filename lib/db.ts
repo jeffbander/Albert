@@ -288,6 +288,24 @@ export async function initDatabase() {
   await db.execute(`
     INSERT OR IGNORE INTO echo_self_model (id) VALUES ('singleton')
   `);
+
+  // Migration: Add missing columns to echo_self_model if they don't exist
+  // These columns were added after the initial table creation
+  const columnsToAdd = [
+    { name: 'current_mood', definition: "TEXT DEFAULT 'neutral'" },
+    { name: 'mood_intensity', definition: 'REAL DEFAULT 0.5' },
+    { name: 'mood_updated_at', definition: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+    { name: 'favorite_topics', definition: "TEXT DEFAULT '[]'" },
+    { name: 'quirks', definition: "TEXT DEFAULT '[]'" },
+  ];
+
+  for (const col of columnsToAdd) {
+    try {
+      await db.execute(`ALTER TABLE echo_self_model ADD COLUMN ${col.name} ${col.definition}`);
+    } catch {
+      // Column already exists, ignore error
+    }
+  }
 }
 
 export async function getLastConversation() {
