@@ -291,10 +291,11 @@ export async function initDatabase() {
 
   // Migration: Add missing columns to echo_self_model if they don't exist
   // These columns were added after the initial table creation
+  // Note: SQLite ALTER TABLE doesn't support CURRENT_TIMESTAMP as default, so use NULL
   const columnsToAdd = [
     { name: 'current_mood', definition: "TEXT DEFAULT 'neutral'" },
     { name: 'mood_intensity', definition: 'REAL DEFAULT 0.5' },
-    { name: 'mood_updated_at', definition: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+    { name: 'mood_updated_at', definition: 'DATETIME DEFAULT NULL' },
     { name: 'favorite_topics', definition: "TEXT DEFAULT '[]'" },
     { name: 'quirks', definition: "TEXT DEFAULT '[]'" },
   ];
