@@ -123,8 +123,9 @@ export function useEagle() {
       const source = audioContextRef.current.createMediaStreamSource(stream);
 
       // Use ScriptProcessor for audio processing
-      // Eagle expects 512 samples per frame at 16kHz
-      const frameLength = profilerRef.current.frameLength || 512;
+      // Eagle SDK uses 512 samples per frame at 16kHz
+      // The property might be 'frameLength' or we need to calculate from sample rate
+      const frameLength = 512; // Fixed at 512 for Eagle
       const bufferSize = 4096;
       processorRef.current = audioContextRef.current.createScriptProcessor(bufferSize, 1, 1);
 
@@ -135,8 +136,9 @@ export function useEagle() {
 
       console.log('Eagle profiler initialized:', {
         sampleRate: profilerRef.current.sampleRate,
-        frameLength: profilerRef.current.frameLength,
+        frameLength: frameLength,
         minEnrollSamples: profilerRef.current.minEnrollSamples,
+        profilerKeys: Object.keys(profilerRef.current),
       });
 
       processorRef.current.onaudioprocess = async (e: AudioProcessingEvent) => {
