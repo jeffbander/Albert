@@ -258,7 +258,9 @@ export function useEagle() {
 
   // Load speakers for identification
   const loadSpeakers = useCallback(async (speakers: Speaker[]): Promise<void> => {
+    console.log('[Eagle] loadSpeakers called with', speakers.length, 'speakers');
     if (!PICOVOICE_ACCESS_KEY) {
+      console.log('[Eagle] No access key configured');
       setIdentificationState(prev => ({
         ...prev,
         error: 'Picovoice access key not configured',
@@ -274,36 +276,44 @@ export function useEagle() {
         const bytes = Uint8Array.from(atob(s.voiceprint), c => c.charCodeAt(0));
         return { bytes };
       });
+      console.log('[Eagle] Converted', profiles.length, 'voiceprints to profiles');
 
       if (profiles.length === 0) {
         return;
       }
 
       // Dynamically import Eagle
+      console.log('[Eagle] Importing Eagle SDK...');
       const { Eagle } = await import('@picovoice/eagle-web');
 
       // Initialize Eagle for identification
+      console.log('[Eagle] Creating Eagle instance...');
       eagleRef.current = await Eagle.create(
         PICOVOICE_ACCESS_KEY,
         { publicPath: '/eagle_params.pv' },
         profiles
       );
+      console.log('[Eagle] Eagle instance created successfully');
 
       setIsInitialized(true);
     } catch (error) {
-      console.error('Failed to load speakers:', error);
+      console.error('[Eagle] Failed to load speakers:', error);
       setInitError(error instanceof Error ? error.message : 'Failed to initialize speaker identification');
     }
   }, []);
 
   // Identify speaker from audio buffer
   const identifySpeaker = useCallback(async (audioData: Int16Array): Promise<Speaker | null> => {
+    console.log('[Eagle] identifySpeaker called with', audioData.length, 'samples');
     if (!eagleRef.current || speakersRef.current.length === 0) {
+      console.log('[Eagle] Cannot identify - eagleRef:', !!eagleRef.current, 'speakers:', speakersRef.current.length);
       return null;
     }
 
     try {
+      console.log('[Eagle] Processing audio...');
       const scores = await eagleRef.current.process(audioData);
+      console.log('[Eagle] Scores:', scores);
 
       // Find best match
       let bestIndex = -1;
@@ -316,8 +326,11 @@ export function useEagle() {
         }
       });
 
+      console.log('[Eagle] Best score:', bestScore, 'threshold:', IDENTIFICATION_THRESHOLD, 'index:', bestIndex);
+
       if (bestScore >= IDENTIFICATION_THRESHOLD && bestIndex >= 0) {
         const speaker = speakersRef.current[bestIndex];
+        console.log('[Eagle] Match found:', speaker.name);
         setIdentificationState({
           isIdentifying: false,
           currentSpeaker: speaker,
@@ -327,6 +340,7 @@ export function useEagle() {
         return speaker;
       }
 
+      console.log('[Eagle] No match (score below threshold)');
       setIdentificationState({
         isIdentifying: false,
         currentSpeaker: null,
@@ -335,7 +349,7 @@ export function useEagle() {
       });
       return null;
     } catch (error) {
-      console.error('Identification error:', error);
+      console.error('[Eagle] Identification error:', error);
       setIdentificationState(prev => ({
         ...prev,
         error: error instanceof Error ? error.message : 'Identification failed',

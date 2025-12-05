@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { endConversation } from '@/lib/db';
+import { endConversation, updateSpeakerMinutes } from '@/lib/db';
 import { performMetacognitiveReflection } from '@/lib/metacognition';
 
 interface ConversationMessage {
@@ -9,7 +9,7 @@ interface ConversationMessage {
 
 export async function POST(request: NextRequest) {
   try {
-    const { conversationId, duration, messages } = await request.json();
+    const { conversationId, duration, messages, speakerId } = await request.json();
 
     if (!conversationId) {
       return NextResponse.json(
@@ -20,6 +20,14 @@ export async function POST(request: NextRequest) {
 
     // End the conversation in the database first
     await endConversation(conversationId, Math.round(duration));
+
+    // Update speaker minutes if we identified the speaker
+    if (speakerId && duration) {
+      const minutes = Math.round(duration / 60);
+      if (minutes > 0) {
+        await updateSpeakerMinutes(speakerId, minutes);
+      }
+    }
 
     // If we have messages, perform deep metacognitive reflection
     // This runs async to not block the response

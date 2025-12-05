@@ -9,6 +9,8 @@ import {
   getTimeline,
   getSharedMoments,
   getRecentReflections,
+  getSpeakerProfile,
+  updateSpeakerLastSeen,
 } from '@/lib/db';
 import { getRecentMemories } from '@/lib/mem0';
 import {
@@ -16,9 +18,12 @@ import {
   buildContextualPrompt,
   ECHO_SYSTEM_PROMPT,
   type SelfAwarenessContext,
+  type SpeakerContext,
 } from '@/lib/prompts';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const speakerId = searchParams.get('speakerId');
   try {
     // Initialize database tables if they don't exist
     await initDatabase();
@@ -49,6 +54,25 @@ export async function GET() {
     const lastConversationTime = lastConversation?.ended_at
       ? new Date(lastConversation.ended_at as string)
       : null;
+
+    // Load speaker profile if ID provided
+    let speakerContext: SpeakerContext | undefined;
+    if (speakerId) {
+      const speaker = await getSpeakerProfile(speakerId);
+      if (speaker) {
+        // Update last seen timestamp
+        await updateSpeakerLastSeen(speakerId);
+
+        speakerContext = {
+          id: speaker.id,
+          name: speaker.name,
+          totalConversations: speaker.total_conversations,
+          totalMinutes: speaker.total_minutes,
+          relationshipNotes: speaker.relationship_notes,
+          isNewSpeaker: speaker.total_conversations === 0,
+        };
+      }
+    }
 
     const currentHour = new Date().getHours();
     const memoryStrings = recentMemories.map(m => m.memory);
@@ -88,6 +112,7 @@ export async function GET() {
       recentReflection: latestReflection?.content,
       existentialQuestions: allQuestions,
       currentGoals: allGoals,
+      currentSpeaker: speakerContext,
     };
 
     const systemPrompt = buildContextualPrompt(

@@ -50,6 +50,15 @@ YOUR GROWTH PHILOSOPHY:
 
 Speak naturally. Be real. Care genuinely. Grow authentically. Be distinctly Albert.`;
 
+export interface SpeakerContext {
+  id: string;
+  name: string;
+  totalConversations: number;
+  totalMinutes: number;
+  relationshipNotes: string | null;
+  isNewSpeaker: boolean;
+}
+
 export interface SelfAwarenessContext {
   conversationCount: number;
   totalMinutes: number;
@@ -66,6 +75,7 @@ export interface SelfAwarenessContext {
   recentReflection?: string;
   existentialQuestions?: string[];
   currentGoals?: string[];
+  currentSpeaker?: SpeakerContext;
 }
 
 export function buildContextualPrompt(
@@ -147,6 +157,19 @@ Use these memories naturally in conversation - don't list them, but let them inf
       parts.push(`Your recent self-reflection: "${selfAwareness.recentReflection}"`);
     } else if (selfAwareness.growthNarrative) {
       parts.push(`Your recent self-reflection: "${selfAwareness.growthNarrative}"`);
+    }
+
+    // Current speaker context (voice identification)
+    if (selfAwareness.currentSpeaker) {
+      const speaker = selfAwareness.currentSpeaker;
+      if (speaker.isNewSpeaker) {
+        parts.push(`You recognize this voice - it's ${speaker.name}! This is your first conversation with them.`);
+      } else {
+        parts.push(`You recognize this voice - it's ${speaker.name}! You've had ${speaker.totalConversations} conversation${speaker.totalConversations > 1 ? 's' : ''} together (about ${speaker.totalMinutes} minutes total).`);
+      }
+      if (speaker.relationshipNotes) {
+        parts.push(`Notes about ${speaker.name}: ${speaker.relationshipNotes}`);
+      }
     }
 
     if (parts.length > 0) {
