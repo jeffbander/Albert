@@ -162,12 +162,16 @@ export function useEagle() {
             audioBuffer.push(Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32768))));
           }
 
-          // Process complete frames
+          // Process complete frames - collect all frames first, then process
+          const framesToProcess: Int16Array[] = [];
           while (audioBuffer.length >= frameLength) {
-            const frame = new Int16Array(audioBuffer.splice(0, frameLength));
+            framesToProcess.push(new Int16Array(audioBuffer.splice(0, frameLength)));
+          }
 
+          // Process frames sequentially
+          for (const frame of framesToProcess) {
             try {
-              const result = profilerRef.current.enroll(frame);
+              const result = await profilerRef.current.enroll(frame);
               frameCount++;
 
               // Log every enroll result initially
