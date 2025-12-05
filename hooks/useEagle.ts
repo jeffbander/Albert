@@ -123,22 +123,19 @@ export function useEagle() {
       const source = audioContextRef.current.createMediaStreamSource(stream);
 
       // Use ScriptProcessor for audio processing
-      // Eagle SDK uses 512 samples per frame at 16kHz
-      // The property might be 'frameLength' or we need to calculate from sample rate
-      const frameLength = 512; // Fixed at 512 for Eagle
+      // Eagle requires minEnrollSamples (6144) per enroll() call, not 512!
+      const minEnrollSamples = profilerRef.current.minEnrollSamples || 6144;
       const bufferSize = 4096;
       processorRef.current = audioContextRef.current.createScriptProcessor(bufferSize, 1, 1);
 
-      // Buffer to accumulate samples for proper frame size
+      // Buffer to accumulate samples - need at least minEnrollSamples per call
       let audioBuffer: number[] = [];
-      let frameCount = 0;
+      let enrollCount = 0;
       let lastPercentage = 0;
 
       console.log('Eagle profiler initialized:', {
         sampleRate: profilerRef.current.sampleRate,
-        frameLength: frameLength,
-        minEnrollSamples: profilerRef.current.minEnrollSamples,
-        profilerKeys: Object.keys(profilerRef.current),
+        minEnrollSamples: minEnrollSamples,
       });
 
       processorRef.current.onaudioprocess = async (e: AudioProcessingEvent) => {
@@ -147,40 +144,31 @@ export function useEagle() {
         try {
           const inputData = e.inputBuffer.getChannelData(0);
 
-          // Check if we're getting audio
-          let maxVal = 0;
-          for (let i = 0; i < inputData.length; i++) {
-            maxVal = Math.max(maxVal, Math.abs(inputData[i]));
-          }
-
-          if (frameCount % 50 === 0) {
-            console.log('Audio frame:', { frameCount, maxVal: maxVal.toFixed(4), bufferLen: audioBuffer.length });
-          }
-
-          // Accumulate samples
+          // Accumulate samples as Int16
           for (let i = 0; i < inputData.length; i++) {
             audioBuffer.push(Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32768))));
           }
 
-          // Process complete frames - collect all frames first, then process
-          const framesToProcess: Int16Array[] = [];
-          while (audioBuffer.length >= frameLength) {
-            framesToProcess.push(new Int16Array(audioBuffer.splice(0, frameLength)));
+          // Log buffer progress
+          if (audioBuffer.length % 8192 < bufferSize) {
+            console.log('Buffer size:', audioBuffer.length, '/', minEnrollSamples);
           }
 
-          // Process frames sequentially
-          for (const frame of framesToProcess) {
+          // Process when we have enough samples
+          while (audioBuffer.length >= minEnrollSamples) {
+            const frame = new Int16Array(audioBuffer.splice(0, minEnrollSamples));
+
             try {
               const result = await profilerRef.current.enroll(frame);
-              frameCount++;
+              enrollCount++;
 
-              // Log every enroll result initially
-              if (frameCount <= 5 || frameCount % 100 === 0) {
-                console.log('Enroll result:', result, 'frameCount:', frameCount);
-              }
+              console.log('Enroll result:', {
+                percentage: result.percentage,
+                feedback: result.feedback,
+                enrollCount: enrollCount,
+              });
 
-              if (result && result.percentage !== lastPercentage) {
-                console.log('Enrollment progress:', result.percentage, '%');
+              if (result.percentage !== lastPercentage) {
                 lastPercentage = result.percentage;
                 setEnrollmentState(prev => ({
                   ...prev,
@@ -189,8 +177,7 @@ export function useEagle() {
                 }));
               }
             } catch (enrollErr) {
-              // Log ALL enrollment errors now
-              console.error('Enroll frame error:', enrollErr);
+              console.error('Enroll error:', enrollErr);
             }
           }
         } catch (err) {
