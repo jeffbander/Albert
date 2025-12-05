@@ -167,10 +167,15 @@ export function useEagle() {
             const frame = new Int16Array(audioBuffer.splice(0, frameLength));
 
             try {
-              const result = await profilerRef.current.enroll(frame);
+              const result = profilerRef.current.enroll(frame);
               frameCount++;
 
-              if (result.percentage !== lastPercentage) {
+              // Log every enroll result initially
+              if (frameCount <= 5 || frameCount % 100 === 0) {
+                console.log('Enroll result:', result, 'frameCount:', frameCount);
+              }
+
+              if (result && result.percentage !== lastPercentage) {
                 console.log('Enrollment progress:', result.percentage, '%');
                 lastPercentage = result.percentage;
                 setEnrollmentState(prev => ({
@@ -180,10 +185,8 @@ export function useEagle() {
                 }));
               }
             } catch (enrollErr) {
-              // Log enrollment-specific errors
-              if (frameCount % 100 === 0) {
-                console.debug('Enroll frame error:', enrollErr);
-              }
+              // Log ALL enrollment errors now
+              console.error('Enroll frame error:', enrollErr);
             }
           }
         } catch (err) {
