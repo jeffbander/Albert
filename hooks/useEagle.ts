@@ -130,12 +130,30 @@ export function useEagle() {
 
       // Buffer to accumulate samples for proper frame size
       let audioBuffer: number[] = [];
+      let frameCount = 0;
+      let lastPercentage = 0;
+
+      console.log('Eagle profiler initialized:', {
+        sampleRate: profilerRef.current.sampleRate,
+        frameLength: profilerRef.current.frameLength,
+        minEnrollSamples: profilerRef.current.minEnrollSamples,
+      });
 
       processorRef.current.onaudioprocess = async (e: AudioProcessingEvent) => {
         if (!profilerRef.current || !isEnrollingRef.current) return;
 
         try {
           const inputData = e.inputBuffer.getChannelData(0);
+
+          // Check if we're getting audio
+          let maxVal = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            maxVal = Math.max(maxVal, Math.abs(inputData[i]));
+          }
+
+          if (frameCount % 50 === 0) {
+            console.log('Audio frame:', { frameCount, maxVal: maxVal.toFixed(4), bufferLen: audioBuffer.length });
+          }
 
           // Accumulate samples
           for (let i = 0; i < inputData.length; i++) {
@@ -145,19 +163,29 @@ export function useEagle() {
           // Process complete frames
           while (audioBuffer.length >= frameLength) {
             const frame = new Int16Array(audioBuffer.splice(0, frameLength));
-            const result = await profilerRef.current.enroll(frame);
 
-            if (result.percentage > 0) {
-              setEnrollmentState(prev => ({
-                ...prev,
-                progress: result.percentage,
-                feedback: getEnrollmentFeedback(result.percentage),
-              }));
+            try {
+              const result = await profilerRef.current.enroll(frame);
+              frameCount++;
+
+              if (result.percentage !== lastPercentage) {
+                console.log('Enrollment progress:', result.percentage, '%');
+                lastPercentage = result.percentage;
+                setEnrollmentState(prev => ({
+                  ...prev,
+                  progress: result.percentage,
+                  feedback: getEnrollmentFeedback(result.percentage),
+                }));
+              }
+            } catch (enrollErr) {
+              // Log enrollment-specific errors
+              if (frameCount % 100 === 0) {
+                console.debug('Enroll frame error:', enrollErr);
+              }
             }
           }
         } catch (err) {
-          // Ignore errors during enrollment (often due to silence/noise)
-          console.debug('Enrollment frame error:', err);
+          console.error('Audio processing error:', err);
         }
       };
 
