@@ -79,9 +79,8 @@ export default function KnowledgeGraphPage() {
       const response = await fetch('/api/graph');
       if (!response.ok) throw new Error('Failed to fetch graph data');
       const graphData: GraphData = await response.json();
-      setData(graphData);
 
-      // Initialize node positions
+      // Initialize node positions BEFORE setting state
       const centerX = 400;
       const centerY = 300;
       graphData.nodes.forEach((node, i) => {
@@ -101,7 +100,9 @@ export default function KnowledgeGraphPage() {
         node.vy = 0;
       });
 
+      // Set ref BEFORE state so draw() has the positioned nodes
       nodesRef.current = graphData.nodes;
+      setData(graphData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -180,7 +181,10 @@ export default function KnowledgeGraphPage() {
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !data) return;
+    if (!canvas || !data) {
+      console.log('Draw skipped: canvas=', !!canvas, 'data=', !!data);
+      return;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -189,6 +193,13 @@ export default function KnowledgeGraphPage() {
 
     const nodes = nodesRef.current;
     const edges = data.edges;
+
+    // Debug: log first render
+    if (nodes.length > 0 && nodes[0].x !== undefined) {
+      console.log('Drawing', nodes.length, 'nodes, first node at:', nodes[0].x, nodes[0].y);
+    } else {
+      console.log('Nodes not positioned yet:', nodes.length, 'nodes, first x:', nodes[0]?.x);
+    }
 
     // Filter nodes based on selection
     const visibleNodes = filter === 'all'
