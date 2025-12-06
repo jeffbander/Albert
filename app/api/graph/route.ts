@@ -463,8 +463,10 @@ export async function GET() {
     recentActivity.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     const limitedActivity = recentActivity.slice(0, 10);
 
-    // Build response
-    const graphData: GraphData = {
+    // Build response - Added version to track deployments
+    const graphData: GraphData & { _version: string; _buildTime: string } = {
+      _version: '2.0.1-sorted-memories',
+      _buildTime: '2025-12-06T18:00:00Z',
       nodes,
       edges,
       stats: {
