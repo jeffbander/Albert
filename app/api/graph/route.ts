@@ -29,6 +29,12 @@ export interface GraphEdge {
   strength: number;
 }
 
+export interface RecentActivity {
+  type: 'memory' | 'milestone' | 'reflection' | 'mood' | 'quirk' | 'interest' | 'opinion' | 'moment';
+  content: string;
+  timestamp: string;
+}
+
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -56,6 +62,7 @@ export interface GraphData {
     quirks: string[];
     favoriteTopics: string[];
   };
+  recentActivity: RecentActivity[];
 }
 
 export async function GET() {
@@ -404,6 +411,58 @@ export async function GET() {
       });
     });
 
+    // Build recent activity feed
+    const recentActivity: RecentActivity[] = [];
+
+    // Add recent memories (from Mem0)
+    (userMemories || []).slice(0, 5).forEach(m => {
+      recentActivity.push({
+        type: 'memory',
+        content: m.memory || '',
+        timestamp: m.created_at || new Date().toISOString(),
+      });
+    });
+
+    // Add recent milestones
+    (timeline || []).slice(0, 3).forEach(m => {
+      recentActivity.push({
+        type: 'milestone',
+        content: m.title || '',
+        timestamp: m.occurred_at?.toISOString() || new Date().toISOString(),
+      });
+    });
+
+    // Add recent reflections
+    (recentReflections || []).slice(0, 2).forEach(r => {
+      recentActivity.push({
+        type: 'reflection',
+        content: r.content || '',
+        timestamp: r.created_at?.toISOString() || new Date().toISOString(),
+      });
+    });
+
+    // Add recent mood changes
+    (moodHistory || []).slice(0, 2).forEach(m => {
+      recentActivity.push({
+        type: 'mood',
+        content: `Feeling ${m.mood}${m.trigger ? ` - ${m.trigger}` : ''}`,
+        timestamp: m.recorded_at?.toISOString() || new Date().toISOString(),
+      });
+    });
+
+    // Add recent shared moments
+    (sharedMoments || []).slice(0, 2).forEach(m => {
+      recentActivity.push({
+        type: 'moment',
+        content: `${m.moment_type}: ${m.content}`,
+        timestamp: m.created_at?.toISOString() || new Date().toISOString(),
+      });
+    });
+
+    // Sort by timestamp (newest first) and limit to 10
+    recentActivity.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const limitedActivity = recentActivity.slice(0, 10);
+
     // Build response
     const graphData: GraphData = {
       nodes,
@@ -435,6 +494,7 @@ export async function GET() {
         quirks: selfModel.quirks || [],
         favoriteTopics: selfModel.favorite_topics || [],
       },
+      recentActivity: limitedActivity,
     };
 
     return NextResponse.json(graphData);

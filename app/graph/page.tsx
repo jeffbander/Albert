@@ -24,6 +24,12 @@ interface GraphEdge {
   strength: number;
 }
 
+interface RecentActivity {
+  type: 'memory' | 'milestone' | 'reflection' | 'mood' | 'quirk' | 'interest' | 'opinion' | 'moment';
+  content: string;
+  timestamp: string;
+}
+
 interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -51,6 +57,7 @@ interface GraphData {
     quirks: string[];
     favoriteTopics: string[];
   };
+  recentActivity: RecentActivity[];
 }
 
 export default function KnowledgeGraphPage() {
@@ -112,7 +119,7 @@ export default function KnowledgeGraphPage() {
 
     // Apply forces
     nodes.forEach(node => {
-      if (!node.x || !node.y) return;
+      if (node.x === undefined || node.y === undefined) return;
 
       // Center gravity
       const dx = centerX - node.x;
@@ -125,7 +132,7 @@ export default function KnowledgeGraphPage() {
 
       // Repulsion from other nodes
       nodes.forEach(other => {
-        if (node.id === other.id || !other.x || !other.y) return;
+        if (node.id === other.id || other.x === undefined || other.y === undefined) return;
         const odx = node.x! - other.x;
         const ody = node.y! - other.y;
         const odist = Math.sqrt(odx * odx + ody * ody);
@@ -141,7 +148,7 @@ export default function KnowledgeGraphPage() {
     edges.forEach(edge => {
       const source = nodes.find(n => n.id === edge.source);
       const target = nodes.find(n => n.id === edge.target);
-      if (!source || !target || !source.x || !target.x) return;
+      if (!source || !target || source.x === undefined || target.x === undefined) return;
 
       const dx = target.x - source.x!;
       const dy = target.y! - source.y!;
@@ -159,7 +166,7 @@ export default function KnowledgeGraphPage() {
 
     // Update positions with velocity
     nodes.forEach(node => {
-      if (!node.x || !node.y) return;
+      if (node.x === undefined || node.y === undefined) return;
       node.vx! *= 0.9; // Damping
       node.vy! *= 0.9;
       node.x += node.vx!;
@@ -196,7 +203,7 @@ export default function KnowledgeGraphPage() {
 
       const source = nodes.find(n => n.id === edge.source);
       const target = nodes.find(n => n.id === edge.target);
-      if (!source || !target || !source.x || !target.x) return;
+      if (!source || !target || source.x === undefined || target.x === undefined) return;
 
       ctx.beginPath();
       ctx.moveTo(source.x, source.y!);
@@ -208,7 +215,7 @@ export default function KnowledgeGraphPage() {
 
     // Draw nodes
     visibleNodes.forEach(node => {
-      if (!node.x || !node.y) return;
+      if (node.x === undefined || node.y === undefined) return;
 
       // Glow for selected
       if (selectedNode?.id === node.id) {
@@ -261,7 +268,7 @@ export default function KnowledgeGraphPage() {
     const y = e.clientY - rect.top;
 
     const clicked = nodesRef.current.find(node => {
-      if (!node.x || !node.y) return false;
+      if (node.x === undefined || node.y === undefined) return false;
       const dx = x - node.x;
       const dy = y - node.y;
       return Math.sqrt(dx * dx + dy * dy) < node.size;
@@ -525,6 +532,37 @@ export default function KnowledgeGraphPage() {
             <p className="text-sm text-gray-300 leading-relaxed">
               {data?.selfModel.growthNarrative || 'Albert is just beginning to develop their story...'}
             </p>
+          </div>
+
+          {/* Recent Activity */}
+          <div className="bg-gray-800 rounded-xl p-4">
+            <h2 className="text-lg font-semibold mb-3 text-purple-300">Recent Activity</h2>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {data?.recentActivity && data.recentActivity.length > 0 ? (
+                data.recentActivity.map((activity, i) => (
+                  <div key={i} className="flex items-start gap-2 text-sm">
+                    <span className="text-lg">
+                      {activity.type === 'memory' && '🧠'}
+                      {activity.type === 'milestone' && '🏆'}
+                      {activity.type === 'reflection' && '💭'}
+                      {activity.type === 'mood' && '😊'}
+                      {activity.type === 'moment' && '✨'}
+                      {activity.type === 'quirk' && '🎭'}
+                      {activity.type === 'interest' && '💡'}
+                      {activity.type === 'opinion' && '🗣️'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-gray-300 truncate">{activity.content}</p>
+                      <p className="text-gray-500 text-xs">
+                        {new Date(activity.timestamp).toLocaleDateString()} {new Date(activity.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-gray-500 text-sm">No recent activity. Have a conversation to see Albert learn!</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
