@@ -74,6 +74,12 @@ export async function getRecentMemories(limit: number = 5): Promise<Memory[]> {
     const mem0 = getMem0Client();
     const results = await mem0.getAll({ user_id: USER_ID });
     const memories = results as Memory[];
+    // Sort by created_at descending (newest first)
+    memories.sort((a, b) => {
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return dateB - dateA;
+    });
     return memories.slice(0, limit);
   } catch (error) {
     console.error('Error getting recent memories:', error);
@@ -86,6 +92,12 @@ export async function getEchoMemories(limit: number = 50): Promise<Memory[]> {
     const mem0 = getMem0Client();
     const results = await mem0.getAll({ user_id: ECHO_SELF_ID });
     const memories = results as Memory[];
+    // Sort by created_at descending (newest first)
+    memories.sort((a, b) => {
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return dateB - dateA;
+    });
     return memories.slice(0, limit);
   } catch (error) {
     console.error('Error getting Echo memories:', error);
