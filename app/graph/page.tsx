@@ -182,23 +182,28 @@ export default function KnowledgeGraphPage() {
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !data) {
-      console.log('Draw skipped: canvas=', !!canvas, 'data=', !!data);
       return;
     }
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      return;
+    }
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, 800, 600);
+
+    // Debug: Draw a test circle to verify canvas works
+    ctx.beginPath();
+    ctx.arc(100, 100, 30, 0, Math.PI * 2);
+    ctx.fillStyle = 'red';
+    ctx.fill();
 
     const nodes = nodesRef.current;
     const edges = data.edges;
 
-    // Debug: log first render
-    if (nodes.length > 0 && nodes[0].x !== undefined) {
-      console.log('Drawing', nodes.length, 'nodes, first node at:', nodes[0].x, nodes[0].y);
-    } else {
-      console.log('Nodes not positioned yet:', nodes.length, 'nodes, first x:', nodes[0]?.x);
+    // Debug: Log node count and positions on every 60th frame
+    if (Math.random() < 0.02) {
+      console.log('Nodes:', nodes.length, 'First node:', nodes[0]?.id, 'x:', nodes[0]?.x, 'y:', nodes[0]?.y);
     }
 
     // Filter nodes based on selection
