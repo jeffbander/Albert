@@ -123,6 +123,27 @@ export interface SpeakerProfile {
   preferences: Record<string, unknown>;
 }
 
+export interface ResponseFeedback {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+  rating: 'up' | 'down';
+  feedback_type?: string; // e.g., 'helpful', 'funny', 'insightful', 'off-topic'
+  memories_used?: string[]; // Memory IDs that were in context for this response
+  created_at: Date;
+}
+
+export interface PendingReflection {
+  id: string;
+  conversation_id: string;
+  messages: string; // JSON stringified messages
+  retry_count: number;
+  last_error?: string;
+  status: 'pending' | 'processing' | 'failed' | 'completed';
+  created_at: Date;
+  updated_at: Date;
+}
+
 export async function initDatabase() {
   const db = getDb();
 
@@ -281,6 +302,35 @@ export async function initDatabase() {
       total_minutes INTEGER DEFAULT 0,
       relationship_notes TEXT,
       preferences TEXT DEFAULT '{}'
+    )
+  `);
+
+  // Response feedback for learning from user ratings
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS response_feedback (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      rating TEXT NOT NULL CHECK(rating IN ('up', 'down')),
+      feedback_type TEXT,
+      memories_used TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    )
+  `);
+
+  // Pending reflections queue for retry logic
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS pending_reflections (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      messages TEXT NOT NULL,
+      retry_count INTEGER DEFAULT 0,
+      last_error TEXT,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'failed', 'completed')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
     )
   `);
 
@@ -1221,6 +1271,274 @@ export async function deleteSpeakerProfile(id: string): Promise<void> {
     sql: 'DELETE FROM speaker_profiles WHERE id = ?',
     args: [id],
   });
+}
+
+// ============================================
+// Response Feedback Functions
+// ============================================
+
+export async function addResponseFeedback(
+  conversationId: string,
+  messageId: string,
+  rating: 'up' | 'down',
+  options: {
+    feedbackType?: string;
+    memoriesUsed?: string[];
+  } = {}
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO response_feedback (id, conversation_id, message_id, rating, feedback_type, memories_used)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      conversationId,
+      messageId,
+      rating,
+      options.feedbackType || null,
+      JSON.stringify(options.memoriesUsed || []),
+    ],
+  });
+  return id;
+}
+
+export async function getFeedbackStats(): Promise<{
+  totalUp: number;
+  totalDown: number;
+  recentFeedback: ResponseFeedback[];
+}> {
+  const db = getDb();
+
+  const upCount = await db.execute(
+    "SELECT COUNT(*) as count FROM response_feedback WHERE rating = 'up'"
+  );
+  const downCount = await db.execute(
+    "SELECT COUNT(*) as count FROM response_feedback WHERE rating = 'down'"
+  );
+  const recent = await db.execute(
+    'SELECT * FROM response_feedback ORDER BY created_at DESC LIMIT 20'
+  );
+
+  return {
+    totalUp: (upCount.rows[0]?.count as number) || 0,
+    totalDown: (downCount.rows[0]?.count as number) || 0,
+    recentFeedback: recent.rows.map(row => ({
+      id: row.id as string,
+      conversation_id: row.conversation_id as string,
+      message_id: row.message_id as string,
+      rating: row.rating as 'up' | 'down',
+      feedback_type: row.feedback_type as string | undefined,
+      memories_used: JSON.parse((row.memories_used as string) || '[]'),
+      created_at: new Date(row.created_at as string),
+    })),
+  };
+}
+
+export async function getFeedbackByConversation(
+  conversationId: string
+): Promise<ResponseFeedback[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM response_feedback WHERE conversation_id = ? ORDER BY created_at DESC',
+    args: [conversationId],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    conversation_id: row.conversation_id as string,
+    message_id: row.message_id as string,
+    rating: row.rating as 'up' | 'down',
+    feedback_type: row.feedback_type as string | undefined,
+    memories_used: JSON.parse((row.memories_used as string) || '[]'),
+    created_at: new Date(row.created_at as string),
+  }));
+}
+
+export async function getFeedbackPatterns(): Promise<{
+  positiveFeedbackTypes: { type: string; count: number }[];
+  negativeFeedbackTypes: { type: string; count: number }[];
+  hourlyDistribution: { hour: number; up: number; down: number }[];
+}> {
+  const db = getDb();
+
+  const positiveTypes = await db.execute(`
+    SELECT feedback_type as type, COUNT(*) as count
+    FROM response_feedback
+    WHERE rating = 'up' AND feedback_type IS NOT NULL
+    GROUP BY feedback_type
+    ORDER BY count DESC
+  `);
+
+  const negativeTypes = await db.execute(`
+    SELECT feedback_type as type, COUNT(*) as count
+    FROM response_feedback
+    WHERE rating = 'down' AND feedback_type IS NOT NULL
+    GROUP BY feedback_type
+    ORDER BY count DESC
+  `);
+
+  const hourly = await db.execute(`
+    SELECT
+      strftime('%H', created_at) as hour,
+      SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) as up,
+      SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) as down
+    FROM response_feedback
+    GROUP BY hour
+    ORDER BY hour
+  `);
+
+  return {
+    positiveFeedbackTypes: positiveTypes.rows.map(row => ({
+      type: row.type as string,
+      count: row.count as number,
+    })),
+    negativeFeedbackTypes: negativeTypes.rows.map(row => ({
+      type: row.type as string,
+      count: row.count as number,
+    })),
+    hourlyDistribution: hourly.rows.map(row => ({
+      hour: parseInt(row.hour as string),
+      up: row.up as number,
+      down: row.down as number,
+    })),
+  };
+}
+
+// ============================================
+// Pending Reflections Functions (Retry Queue)
+// ============================================
+
+const MAX_RETRY_COUNT = 3;
+
+export async function addPendingReflection(
+  conversationId: string,
+  messages: { role: string; content: string }[]
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO pending_reflections (id, conversation_id, messages, status)
+          VALUES (?, ?, ?, 'pending')`,
+    args: [id, conversationId, JSON.stringify(messages)],
+  });
+  console.log(`[PendingReflection] Added pending reflection for conversation ${conversationId}`);
+  return id;
+}
+
+export async function getPendingReflections(limit: number = 10): Promise<PendingReflection[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM pending_reflections
+          WHERE status = 'pending' AND retry_count < ?
+          ORDER BY created_at ASC
+          LIMIT ?`,
+    args: [MAX_RETRY_COUNT, limit],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    conversation_id: row.conversation_id as string,
+    messages: row.messages as string,
+    retry_count: row.retry_count as number,
+    last_error: row.last_error as string | undefined,
+    status: row.status as PendingReflection['status'],
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  }));
+}
+
+export async function updatePendingReflectionStatus(
+  id: string,
+  status: PendingReflection['status'],
+  error?: string
+): Promise<void> {
+  const db = getDb();
+  if (error) {
+    await db.execute({
+      sql: `UPDATE pending_reflections
+            SET status = ?, last_error = ?, retry_count = retry_count + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+      args: [status, error, id],
+    });
+  } else {
+    await db.execute({
+      sql: `UPDATE pending_reflections
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+      args: [status, id],
+    });
+  }
+}
+
+export async function markReflectionProcessing(id: string): Promise<void> {
+  await updatePendingReflectionStatus(id, 'processing');
+}
+
+export async function markReflectionCompleted(id: string): Promise<void> {
+  await updatePendingReflectionStatus(id, 'completed');
+  console.log(`[PendingReflection] Marked reflection ${id} as completed`);
+}
+
+export async function markReflectionFailed(id: string, error: string): Promise<void> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT retry_count FROM pending_reflections WHERE id = ?',
+    args: [id],
+  });
+  const currentRetries = (result.rows[0]?.retry_count as number) || 0;
+
+  if (currentRetries + 1 >= MAX_RETRY_COUNT) {
+    // Max retries reached, mark as permanently failed
+    await updatePendingReflectionStatus(id, 'failed', error);
+    console.error(`[PendingReflection] Reflection ${id} permanently failed after ${MAX_RETRY_COUNT} attempts`);
+  } else {
+    // Still has retries left, mark as pending for retry
+    await db.execute({
+      sql: `UPDATE pending_reflections
+            SET status = 'pending', last_error = ?, retry_count = retry_count + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+      args: [error, id],
+    });
+    console.warn(`[PendingReflection] Reflection ${id} failed, will retry (attempt ${currentRetries + 2}/${MAX_RETRY_COUNT})`);
+  }
+}
+
+export async function deletePendingReflection(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM pending_reflections WHERE id = ?',
+    args: [id],
+  });
+}
+
+export async function getReflectionQueueStats(): Promise<{
+  pending: number;
+  processing: number;
+  failed: number;
+  completed: number;
+}> {
+  const db = getDb();
+  const result = await db.execute(`
+    SELECT status, COUNT(*) as count
+    FROM pending_reflections
+    GROUP BY status
+  `);
+
+  const stats = {
+    pending: 0,
+    processing: 0,
+    failed: 0,
+    completed: 0,
+  };
+
+  result.rows.forEach(row => {
+    const status = row.status as string;
+    const count = row.count as number;
+    if (status in stats) {
+      stats[status as keyof typeof stats] = count;
+    }
+  });
+
+  return stats;
 }
 
 export default getDb;

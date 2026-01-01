@@ -76,6 +76,7 @@ export interface SelfAwarenessContext {
   existentialQuestions?: string[];
   currentGoals?: string[];
   currentSpeaker?: SpeakerContext;
+  effectivePatterns?: string[]; // Communication patterns that work well
 }
 
 export function buildContextualPrompt(
@@ -170,6 +171,11 @@ Use these memories naturally in conversation - don't list them, but let them inf
       if (speaker.relationshipNotes) {
         parts.push(`Notes about ${speaker.name}: ${speaker.relationshipNotes}`);
       }
+    }
+
+    // Effective communication patterns (from past conversations)
+    if (selfAwareness.effectivePatterns && selfAwareness.effectivePatterns.length > 0) {
+      parts.push(`Communication approaches that work well: ${selfAwareness.effectivePatterns.join('; ')}.`);
     }
 
     if (parts.length > 0) {

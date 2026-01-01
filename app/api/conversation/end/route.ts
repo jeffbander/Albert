@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { endConversation, updateSpeakerMinutes } from '@/lib/db';
+import {
+  endConversation,
+  updateSpeakerMinutes,
+  addPendingReflection,
+  markReflectionProcessing,
+  markReflectionCompleted,
+  markReflectionFailed,
+} from '@/lib/db';
 import { performMetacognitiveReflection } from '@/lib/metacognition';
 
 interface ConversationMessage {
@@ -29,13 +36,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // If we have messages, perform deep metacognitive reflection
-    // This runs async to not block the response
+    // If we have messages, perform deep metacognitive reflection with retry support
     if (messages && messages.length > 0) {
-      // Run reflection in background (don't await)
-      performMetacognitiveReflection(messages, conversationId).catch(error => {
-        console.error('Background metacognitive reflection failed:', error);
-      });
+      // Add to pending queue first (for recovery if process crashes)
+      const reflectionId = await addPendingReflection(conversationId, messages);
+
+      // Run reflection in background with proper error handling
+      (async () => {
+        try {
+          await markReflectionProcessing(reflectionId);
+          await performMetacognitiveReflection(messages, conversationId);
+          await markReflectionCompleted(reflectionId);
+          console.log(`[Metacognition] Successfully completed reflection for conversation ${conversationId}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`[Metacognition] Reflection failed for conversation ${conversationId}:`, errorMessage);
+          await markReflectionFailed(reflectionId, errorMessage);
+        }
+      })();
     }
 
     return NextResponse.json({ success: true });

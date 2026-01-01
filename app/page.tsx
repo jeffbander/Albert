@@ -7,6 +7,7 @@ import PasscodeGate from '@/components/PasscodeGate';
 import { useEagle } from '@/hooks/useEagle';
 
 interface ConversationMessage {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
 }
@@ -29,6 +30,9 @@ export default function Home() {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [identifiedSpeaker, setIdentifiedSpeaker] = useState<Speaker | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [lastMessageId, setLastMessageId] = useState<string | null>(null);
+  const [feedbackGiven, setFeedbackGiven] = useState<'up' | 'down' | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -332,6 +336,7 @@ export default function Home() {
       case 'conversation.item.input_audio_transcription.completed':
         if (event.transcript) {
           messagesRef.current.push({
+            id: crypto.randomUUID(),
             role: 'user',
             content: event.transcript as string,
           });
@@ -347,10 +352,22 @@ export default function Home() {
 
       case 'response.audio_transcript.done':
         if (event.transcript) {
+          const messageId = crypto.randomUUID();
           messagesRef.current.push({
+            id: messageId,
             role: 'assistant',
             content: event.transcript as string,
           });
+
+          // Show feedback UI after Albert finishes speaking
+          setLastMessageId(messageId);
+          setFeedbackGiven(null);
+          setShowFeedback(true);
+
+          // Auto-hide feedback after 10 seconds if no interaction
+          setTimeout(() => {
+            setShowFeedback(false);
+          }, 10000);
         }
         break;
 
@@ -360,6 +377,34 @@ export default function Home() {
         break;
     }
   }, [cleanup]);
+
+  // Submit feedback for a response
+  const submitFeedback = useCallback(async (rating: 'up' | 'down') => {
+    if (!conversationIdRef.current || !lastMessageId) return;
+
+    setFeedbackGiven(rating);
+
+    try {
+      await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: conversationIdRef.current,
+          messageId: lastMessageId,
+          rating,
+        }),
+      });
+      console.log(`Feedback submitted: ${rating}`);
+    } catch (err) {
+      console.error('Error submitting feedback:', err);
+    }
+
+    // Hide feedback UI after a short delay
+    setTimeout(() => {
+      setShowFeedback(false);
+      setFeedbackGiven(null);
+    }, 1500);
+  }, [lastMessageId]);
 
   // Toggle conversation
   const handleOrbClick = useCallback(() => {
@@ -425,6 +470,43 @@ export default function Home() {
           <div className="absolute top-1/2 mt-32 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-green-500/20 border border-green-500/50 text-green-300 px-4 py-2 rounded-full text-sm">
             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
             Talking to {identifiedSpeaker.name}
+          </div>
+        )}
+
+        {/* Feedback UI - appears after Albert speaks */}
+        {isConnected && showFeedback && (
+          <div className="absolute top-1/2 mt-48 left-1/2 -translate-x-1/2 flex items-center gap-3">
+            {feedbackGiven ? (
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm ${
+                feedbackGiven === 'up'
+                  ? 'bg-green-500/20 border border-green-500/50 text-green-300'
+                  : 'bg-red-500/20 border border-red-500/50 text-red-300'
+              }`}>
+                {feedbackGiven === 'up' ? '👍' : '👎'} Thanks for the feedback!
+              </div>
+            ) : (
+              <>
+                <span className="text-gray-500 text-xs">Was that helpful?</span>
+                <button
+                  onClick={() => submitFeedback('up')}
+                  className="p-2 rounded-full bg-gray-800/50 border border-gray-700 hover:bg-green-500/20 hover:border-green-500/50 text-gray-400 hover:text-green-300 transition-all"
+                  title="Thumbs up"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => submitFeedback('down')}
+                  className="p-2 rounded-full bg-gray-800/50 border border-gray-700 hover:bg-red-500/20 hover:border-red-500/50 text-gray-400 hover:text-red-300 transition-all"
+                  title="Thumbs down"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
+                  </svg>
+                </button>
+              </>
+            )}
           </div>
         )}
 

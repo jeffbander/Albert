@@ -11,8 +11,9 @@ import {
   getRecentReflections,
   getSpeakerProfile,
   updateSpeakerLastSeen,
+  getEffectivePatterns,
 } from '@/lib/db';
-import { getRecentMemories } from '@/lib/mem0';
+import { getRelevantMemories, getRecentMemories } from '@/lib/mem0';
 import {
   generateGreeting,
   buildContextualPrompt,
@@ -24,6 +25,8 @@ import {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const speakerId = searchParams.get('speakerId');
+  const topic = searchParams.get('topic'); // Optional topic for relevance-based retrieval
+
   try {
     // Initialize database tables if they don't exist
     await initDatabase();
@@ -31,7 +34,6 @@ export async function GET(request: Request) {
     // Fetch all context in parallel
     const [
       lastConversation,
-      recentMemories,
       selfModel,
       conversationCount,
       totalSeconds,
@@ -39,9 +41,9 @@ export async function GET(request: Request) {
       recentMilestones,
       sharedMoments,
       recentReflections,
+      effectivePatterns,
     ] = await Promise.all([
       getLastConversation(),
-      getRecentMemories(5),
       getEchoSelfModel(),
       getConversationCount(),
       getTotalInteractionTime(),
@@ -49,7 +51,20 @@ export async function GET(request: Request) {
       getTimeline(3),
       getSharedMoments(5),
       getRecentReflections(2),
+      getEffectivePatterns(undefined, 0.5), // Get patterns with 50%+ effectiveness
     ]);
+
+    // Get memories - use relevance scoring if topic provided, otherwise recent
+    let recentMemories;
+    if (topic && topic.trim().length > 0) {
+      // Use semantic search with relevance scoring
+      recentMemories = await getRelevantMemories(topic, 5);
+      console.log(`[Context] Using relevance-based memory retrieval for topic: "${topic.substring(0, 30)}..."`);
+    } else {
+      // Fall back to recency-based retrieval
+      recentMemories = await getRecentMemories(5);
+      console.log('[Context] Using recency-based memory retrieval (no topic provided)');
+    }
 
     const lastConversationTime = lastConversation?.ended_at
       ? new Date(lastConversation.ended_at as string)
@@ -113,6 +128,10 @@ export async function GET(request: Request) {
       existentialQuestions: allQuestions,
       currentGoals: allGoals,
       currentSpeaker: speakerContext,
+      // NEW: Include effective communication patterns
+      effectivePatterns: (effectivePatterns || [])
+        .slice(0, 3)
+        .map(p => p.pattern),
     };
 
     const systemPrompt = buildContextualPrompt(

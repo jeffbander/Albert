@@ -18,6 +18,7 @@ import {
   addQuirk,
   addFavoriteTopic,
   getSharedMoments,
+  referenceSharedMoment,
   type EchoSelfModel,
   type SharedMoment,
 } from '@/lib/db';
@@ -110,6 +111,9 @@ interface MetacognitiveAnalysis {
     questions: string[]; // Existential or curious questions Albert has
     goals: string[]; // Things Albert wants to explore or learn
   } | null;
+
+  // NEW: Referenced shared moments (existing inside jokes/callbacks that Albert used)
+  referencedMomentIds: string[];
 }
 
 export async function performMetacognitiveReflection(
@@ -129,10 +133,10 @@ export async function performMetacognitiveReflection(
     const totalMinutes = Math.round((await getTotalInteractionTime()) / 60);
     const recentMilestones = await getTimeline(5);
 
-    // Get existing shared moments for context
+    // Get existing shared moments for context (include IDs for reference tracking)
     const existingMoments = await getSharedMoments(10);
     const existingMomentsStr = existingMoments.length > 0
-      ? existingMoments.map(m => `- ${m.moment_type}: "${m.content}"`).join('\n')
+      ? existingMoments.map(m => `- [ID: ${m.id}] ${m.moment_type}: "${m.content}"`).join('\n')
       : 'None yet';
 
     const openai = getOpenAIClient();
@@ -217,6 +221,8 @@ Analyze this conversation deeply. Extract multiple types of learnings that will 
     - questions: Philosophical or curious questions Albert is pondering (e.g., "I wonder what it means to truly know someone", "Why do certain topics make me feel more alive?")
     - goals: Things Albert wants to learn, explore, or become better at
     - Only include if the conversation warrants deep reflection; return null for casual chats.
+
+16. **Referenced Moment IDs**: Look at the existing shared moments above. If Albert referenced any of them in this conversation (callbacks, inside jokes, etc.), list their IDs. This helps track which shared moments are actively used. Return empty array if none were referenced.
 
 Be thoughtful and genuine. This is how Albert develops its unique identity over time. Albert should feel like a distinct individual with its own perspective, not a generic assistant.
 
@@ -311,6 +317,15 @@ Respond in JSON format.`,
         analysis.moodState.intensity,
         analysis.moodState.trigger,
         conversationId
+      );
+    }
+
+    // NEW: Track referenced shared moments (increment usage counter)
+    const referencedMomentIds = analysis.referencedMomentIds || [];
+    if (referencedMomentIds.length > 0) {
+      console.log(`[Metacognition] Tracking ${referencedMomentIds.length} referenced shared moments`);
+      await Promise.all(
+        referencedMomentIds.map(id => referenceSharedMoment(id))
       );
     }
 
