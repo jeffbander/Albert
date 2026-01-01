@@ -118,64 +118,91 @@ export default function KnowledgeGraphPage() {
     const centerX = 400;
     const centerY = 300;
 
+    // Helper to safely get/set velocity (prevents NaN propagation)
+    const safeNumber = (val: number | undefined, fallback: number) => {
+      if (val === undefined || isNaN(val) || !isFinite(val)) return fallback;
+      return val;
+    };
+
     // Apply forces
     nodes.forEach(node => {
-      if (node.x === undefined || node.y === undefined) return;
+      // Ensure all properties are valid numbers
+      node.x = safeNumber(node.x, centerX + (Math.random() - 0.5) * 100);
+      node.y = safeNumber(node.y, centerY + (Math.random() - 0.5) * 100);
+      node.vx = safeNumber(node.vx, 0);
+      node.vy = safeNumber(node.vy, 0);
 
-      // Center gravity
+      // Center gravity (gentle pull toward center)
       const dx = centerX - node.x;
       const dy = centerY - node.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 0) {
-        node.vx! += (dx / dist) * 0.1;
-        node.vy! += (dy / dist) * 0.1;
+      if (dist > 1) {
+        const gravityForce = 0.05;
+        node.vx += (dx / dist) * gravityForce;
+        node.vy += (dy / dist) * gravityForce;
       }
 
       // Repulsion from other nodes
       nodes.forEach(other => {
-        if (node.id === other.id || other.x === undefined || other.y === undefined) return;
-        const odx = node.x! - other.x;
-        const ody = node.y! - other.y;
+        if (node.id === other.id) return;
+        other.x = safeNumber(other.x, centerX);
+        other.y = safeNumber(other.y, centerY);
+
+        const odx = (node.x as number) - other.x;
+        const ody = (node.y as number) - other.y;
         const odist = Math.sqrt(odx * odx + ody * ody);
-        if (odist > 0 && odist < 100) {
-          const force = (100 - odist) / odist * 0.5;
-          node.vx! += (odx / odist) * force;
-          node.vy! += (ody / odist) * force;
+
+        // Prevent division by zero and apply repulsion within range
+        if (odist > 1 && odist < 150) {
+          const repulsionForce = (150 - odist) / odist * 0.3;
+          (node.vx as number) += (odx / odist) * repulsionForce;
+          (node.vy as number) += (ody / odist) * repulsionForce;
         }
       });
     });
 
-    // Apply edge forces (attraction)
+    // Apply edge forces (attraction along edges)
     edges.forEach(edge => {
       const source = nodes.find(n => n.id === edge.source);
       const target = nodes.find(n => n.id === edge.target);
-      if (!source || !target || source.x === undefined || target.x === undefined) return;
+      if (!source || !target) return;
 
-      const dx = target.x - source.x!;
-      const dy = target.y! - source.y!;
+      source.x = safeNumber(source.x, centerX);
+      source.y = safeNumber(source.y, centerY);
+      target.x = safeNumber(target.x, centerX);
+      target.y = safeNumber(target.y, centerY);
+      source.vx = safeNumber(source.vx, 0);
+      source.vy = safeNumber(source.vy, 0);
+      target.vx = safeNumber(target.vx, 0);
+      target.vy = safeNumber(target.vy, 0);
+
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const targetDist = 120;
+      const targetDist = 100 + edge.strength * 50;
 
-      if (dist > 0) {
-        const force = (dist - targetDist) * 0.01 * edge.strength;
-        source.vx! += (dx / dist) * force;
-        source.vy! += (dy / dist) * force;
-        target.vx! -= (dx / dist) * force;
-        target.vy! -= (dy / dist) * force;
+      if (dist > 1) {
+        const attractionForce = (dist - targetDist) * 0.008 * edge.strength;
+        source.vx += (dx / dist) * attractionForce;
+        source.vy += (dy / dist) * attractionForce;
+        target.vx -= (dx / dist) * attractionForce;
+        target.vy -= (dy / dist) * attractionForce;
       }
     });
 
     // Update positions with velocity
     nodes.forEach(node => {
-      if (node.x === undefined || node.y === undefined) return;
-      node.vx! *= 0.9; // Damping
-      node.vy! *= 0.9;
-      node.x += node.vx!;
-      node.y += node.vy!;
+      // Apply damping
+      node.vx = safeNumber(node.vx, 0) * 0.92;
+      node.vy = safeNumber(node.vy, 0) * 0.92;
 
-      // Keep in bounds
-      node.x = Math.max(50, Math.min(750, node.x));
-      node.y = Math.max(50, Math.min(550, node.y));
+      // Update position
+      node.x = safeNumber(node.x, centerX) + node.vx;
+      node.y = safeNumber(node.y, centerY) + node.vy;
+
+      // Keep in bounds with padding
+      node.x = Math.max(60, Math.min(740, node.x));
+      node.y = Math.max(60, Math.min(540, node.y));
     });
   }, [data]);
 
@@ -192,19 +219,8 @@ export default function KnowledgeGraphPage() {
 
     ctx.clearRect(0, 0, 800, 600);
 
-    // Debug: Draw a test circle to verify canvas works
-    ctx.beginPath();
-    ctx.arc(100, 100, 30, 0, Math.PI * 2);
-    ctx.fillStyle = 'red';
-    ctx.fill();
-
     const nodes = nodesRef.current;
     const edges = data.edges;
-
-    // Debug: Log node count and positions on every 60th frame
-    if (Math.random() < 0.02) {
-      console.log('Nodes:', nodes.length, 'First node:', nodes[0]?.id, 'x:', nodes[0]?.x, 'y:', nodes[0]?.y);
-    }
 
     // Filter nodes based on selection
     const visibleNodes = filter === 'all'

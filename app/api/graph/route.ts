@@ -67,7 +67,8 @@ export interface GraphData {
 
 export async function GET() {
   try {
-    // Fetch all data in parallel
+    // Fetch all data in parallel with individual error handling
+    // Each fetch returns default value on failure, preventing total failure
     const [
       userMemories,
       echoMemories,
@@ -82,18 +83,18 @@ export async function GET() {
       recentReflections,
       moodHistory,
     ] = await Promise.all([
-      getRecentMemories(50),
-      getEchoMemories(50),
-      getEchoSelfModel(),
-      getTimeline(20),
-      getRecentEpisodicMemories(30),
-      getProceduralMemories(),
-      getLatestGrowthMetrics(),
-      getConversationCount(),
-      getTotalInteractionTime(),
-      getSharedMoments(20),
-      getRecentReflections(5),
-      getMoodHistory(10),
+      getRecentMemories(50).catch((e) => { console.error('[Graph] Failed to fetch user memories:', e.message); return []; }),
+      getEchoMemories(50).catch((e) => { console.error('[Graph] Failed to fetch echo memories:', e.message); return []; }),
+      getEchoSelfModel().catch((e) => { console.error('[Graph] Failed to fetch self model:', e.message); return null; }),
+      getTimeline(20).catch((e) => { console.error('[Graph] Failed to fetch timeline:', e.message); return []; }),
+      getRecentEpisodicMemories(30).catch((e) => { console.error('[Graph] Failed to fetch episodic memories:', e.message); return []; }),
+      getProceduralMemories().catch((e) => { console.error('[Graph] Failed to fetch procedural memories:', e.message); return []; }),
+      getLatestGrowthMetrics().catch((e) => { console.error('[Graph] Failed to fetch growth metrics:', e.message); return null; }),
+      getConversationCount().catch((e) => { console.error('[Graph] Failed to fetch conversation count:', e.message); return 0; }),
+      getTotalInteractionTime().catch((e) => { console.error('[Graph] Failed to fetch interaction time:', e.message); return 0; }),
+      getSharedMoments(20).catch((e) => { console.error('[Graph] Failed to fetch shared moments:', e.message); return []; }),
+      getRecentReflections(5).catch((e) => { console.error('[Graph] Failed to fetch reflections:', e.message); return []; }),
+      getMoodHistory(10).catch((e) => { console.error('[Graph] Failed to fetch mood history:', e.message); return []; }),
     ]);
 
     // Ensure selfModel has default values if null
@@ -112,10 +113,6 @@ export async function GET() {
       growth_narrative: '',
       mood_updated_at: null,
     };
-
-    // Mark unused variables to avoid linter warnings
-    void episodicMemories;
-    void moodHistory;
 
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
@@ -145,17 +142,35 @@ export async function GET() {
       strength: 1,
     });
 
+    // Helper to create unique IDs from content
+    const hashString = (str: string) => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+      }
+      return Math.abs(hash).toString(36);
+    };
+
     // Process user memories - extract topics
-    (userMemories || []).forEach((mem, i) => {
-      const memId = `mem_${i}`;
+    (userMemories || []).forEach((mem) => {
       const memoryText = mem.memory || '';
+      if (!memoryText) return;
+
+      // Use content hash + timestamp for unique ID
+      const memId = `mem_${hashString(memoryText + (mem.created_at || ''))}`;
+
+      // Skip if node already exists
+      if (nodes.find(n => n.id === memId)) return;
+
       nodes.push({
         id: memId,
         label: memoryText.length > 50 ? memoryText.slice(0, 50) + '...' : memoryText,
         type: 'memory',
         size: 15,
         color: '#3b82f6',
-        metadata: { full: mem.memory },
+        metadata: { full: mem.memory, createdAt: mem.created_at },
       });
 
       edges.push({
@@ -186,6 +201,56 @@ export async function GET() {
           strength: 0.3,
         });
       });
+    });
+
+    // Add episodic memories (specific moments with emotional weight)
+    (episodicMemories || []).forEach((ep) => {
+      const summary = ep.summary || '';
+      if (!summary) return;
+
+      const epId = `ep_${hashString(summary + (ep.occurred_at?.toISOString() || ''))}`;
+
+      // Skip if node already exists
+      if (nodes.find(n => n.id === epId)) return;
+
+      const valence = ep.emotional_valence ?? 0;
+      const valenceColor = valence > 0 ? '#22c55e' :
+                          valence < 0 ? '#ef4444' : '#6b7280';
+
+      nodes.push({
+        id: epId,
+        label: summary.length > 45 ? summary.slice(0, 45) + '...' : summary,
+        type: 'memory',
+        size: 12 + Math.abs(valence) * 8,
+        color: valenceColor,
+        metadata: {
+          full: summary,
+          eventType: ep.event_type,
+          valence: valence,
+          significance: ep.significance,
+          entities: ep.entities,
+          conversationId: ep.conversation_id,
+          occurredAt: ep.occurred_at,
+        },
+      });
+
+      // Connect to user (episodic memories are shared experiences)
+      edges.push({
+        source: 'user',
+        target: epId,
+        label: 'experienced',
+        strength: Math.min(1, (ep.significance ?? 0.5) + 0.2),
+      });
+
+      // Also connect to Echo for emotional or revelation memories
+      if (ep.event_type === 'emotional' || ep.event_type === 'revelation') {
+        edges.push({
+          source: 'echo',
+          target: epId,
+          label: 'felt',
+          strength: 0.4,
+        });
+      }
     });
 
     // Add Echo's interests
@@ -414,48 +479,81 @@ export async function GET() {
     // Build recent activity feed
     const recentActivity: RecentActivity[] = [];
 
+    // Helper to parse timestamps safely
+    const parseTimestamp = (ts: string | Date | null | undefined): string | null => {
+      if (!ts) return null;
+      try {
+        const date = typeof ts === 'string' ? new Date(ts) : ts;
+        if (isNaN(date.getTime())) return null;
+        return date.toISOString();
+      } catch {
+        return null;
+      }
+    };
+
     // Add recent memories (from Mem0)
     (userMemories || []).slice(0, 5).forEach(m => {
+      const timestamp = parseTimestamp(m.created_at);
+      if (!timestamp || !m.memory) return;
       recentActivity.push({
         type: 'memory',
-        content: m.memory || '',
-        timestamp: m.created_at || new Date().toISOString(),
+        content: m.memory,
+        timestamp,
       });
     });
 
     // Add recent milestones
     (timeline || []).slice(0, 3).forEach(m => {
+      const timestamp = parseTimestamp(m.occurred_at);
+      if (!timestamp || !m.title) return;
       recentActivity.push({
         type: 'milestone',
-        content: m.title || '',
-        timestamp: m.occurred_at?.toISOString() || new Date().toISOString(),
+        content: m.title,
+        timestamp,
       });
     });
 
     // Add recent reflections
     (recentReflections || []).slice(0, 2).forEach(r => {
+      const timestamp = parseTimestamp(r.created_at);
+      if (!timestamp || !r.content) return;
       recentActivity.push({
         type: 'reflection',
-        content: r.content || '',
-        timestamp: r.created_at?.toISOString() || new Date().toISOString(),
+        content: r.content,
+        timestamp,
       });
     });
 
     // Add recent mood changes
     (moodHistory || []).slice(0, 2).forEach(m => {
+      const timestamp = parseTimestamp(m.recorded_at);
+      if (!timestamp || !m.mood) return;
       recentActivity.push({
         type: 'mood',
         content: `Feeling ${m.mood}${m.trigger ? ` - ${m.trigger}` : ''}`,
-        timestamp: m.recorded_at?.toISOString() || new Date().toISOString(),
+        timestamp,
       });
     });
 
     // Add recent shared moments
     (sharedMoments || []).slice(0, 2).forEach(m => {
+      const timestamp = parseTimestamp(m.created_at);
+      if (!timestamp || !m.content) return;
       recentActivity.push({
         type: 'moment',
         content: `${m.moment_type}: ${m.content}`,
-        timestamp: m.created_at?.toISOString() || new Date().toISOString(),
+        timestamp,
+      });
+    });
+
+    // Add recent episodic memories
+    (episodicMemories || []).slice(0, 3).forEach(ep => {
+      const timestamp = parseTimestamp(ep.occurred_at);
+      if (!timestamp || !ep.summary) return;
+      recentActivity.push({
+        type: 'memory',
+        content: ep.summary + (ep.event_type ? ` (${ep.event_type})` : ''),
+        timestamp,
       });
     });
 
@@ -465,8 +563,8 @@ export async function GET() {
 
     // Build response - Added version to track deployments
     const graphData: GraphData & { _version: string; _buildTime: string } = {
-      _version: '2.0.1-sorted-memories',
-      _buildTime: '2025-12-06T18:00:00Z',
+      _version: '3.0.0-fixed-graph',
+      _buildTime: new Date().toISOString(),
       nodes,
       edges,
       stats: {
@@ -512,7 +610,7 @@ export async function GET() {
 function extractTopics(text: string): string[] {
   const topics: string[] = [];
 
-  // Common topic keywords to look for
+  // Common topic patterns to extract context from memories
   const topicPatterns = [
     /interested in (\w+(?:\s+\w+)?)/gi,
     /about (\w+(?:\s+\w+)?)/gi,
@@ -520,6 +618,17 @@ function extractTopics(text: string): string[] {
     /values? (\w+(?:\s+\w+)?)/gi,
     /believes? in (\w+(?:\s+\w+)?)/gi,
   ];
+
+  // Extract topics from patterns
+  topicPatterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const topic = match[1]?.trim();
+      if (topic && topic.length > 2 && topic.length < 30) {
+        topics.push(topic);
+      }
+    }
+  });
 
   // Extract named entities and concepts
   const conceptWords = [
