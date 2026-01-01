@@ -1,4 +1,11 @@
 import { createClient, Client } from '@libsql/client';
+import type {
+  BuildProject,
+  BuildLogEntry,
+  BuildStatus,
+  ProjectType,
+  DeployTarget,
+} from '@/types/build';
 
 let dbClient: Client | null = null;
 
@@ -357,6 +364,36 @@ export async function initDatabase() {
       // Column already exists, ignore error
     }
   }
+
+  // Build projects for Albert's autonomous building capabilities
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS build_projects (
+      id TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      project_type TEXT NOT NULL,
+      status TEXT DEFAULT 'queued' CHECK(status IN ('queued', 'planning', 'building', 'testing', 'deploying', 'complete', 'failed')),
+      workspace_path TEXT,
+      preferred_stack TEXT,
+      deploy_target TEXT DEFAULT 'localhost' CHECK(deploy_target IN ('localhost', 'vercel')),
+      local_port INTEGER,
+      deploy_url TEXT,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Build logs for tracking progress
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS build_logs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      message TEXT NOT NULL,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES build_projects(id) ON DELETE CASCADE
+    )
+  `);
 }
 
 export async function getLastConversation() {
@@ -1539,6 +1576,154 @@ export async function getReflectionQueueStats(): Promise<{
   });
 
   return stats;
+}
+
+// ============================================
+// Build Project Functions (Albert's Builder)
+// ============================================
+
+export async function createBuildProject(
+  description: string,
+  projectType: ProjectType,
+  workspacePath: string,
+  options: {
+    preferredStack?: string;
+    deployTarget?: DeployTarget;
+  } = {}
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO build_projects (id, description, project_type, workspace_path, preferred_stack, deploy_target)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      description,
+      projectType,
+      workspacePath,
+      options.preferredStack || null,
+      options.deployTarget || 'localhost',
+    ],
+  });
+  return id;
+}
+
+export async function getBuildProject(id: string): Promise<BuildProject | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM build_projects WHERE id = ?',
+    args: [id],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id as string,
+    description: row.description as string,
+    projectType: row.project_type as ProjectType,
+    status: row.status as BuildStatus,
+    workspacePath: row.workspace_path as string,
+    preferredStack: row.preferred_stack as string | undefined,
+    deployTarget: row.deploy_target as DeployTarget,
+    localPort: row.local_port as number | undefined,
+    deployUrl: row.deploy_url as string | undefined,
+    error: row.error as string | undefined,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function getAllBuildProjects(): Promise<BuildProject[]> {
+  const db = getDb();
+  const result = await db.execute(
+    'SELECT * FROM build_projects ORDER BY created_at DESC'
+  );
+  return result.rows.map(row => ({
+    id: row.id as string,
+    description: row.description as string,
+    projectType: row.project_type as ProjectType,
+    status: row.status as BuildStatus,
+    workspacePath: row.workspace_path as string,
+    preferredStack: row.preferred_stack as string | undefined,
+    deployTarget: row.deploy_target as DeployTarget,
+    localPort: row.local_port as number | undefined,
+    deployUrl: row.deploy_url as string | undefined,
+    error: row.error as string | undefined,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  }));
+}
+
+export async function updateBuildProjectStatus(
+  id: string,
+  status: BuildStatus,
+  options: {
+    error?: string;
+    localPort?: number;
+    deployUrl?: string;
+  } = {}
+): Promise<void> {
+  const db = getDb();
+  const updates: string[] = ['status = ?', 'updated_at = CURRENT_TIMESTAMP'];
+  const args: (string | number)[] = [status];
+
+  if (options.error !== undefined) {
+    updates.push('error = ?');
+    args.push(options.error);
+  }
+  if (options.localPort !== undefined) {
+    updates.push('local_port = ?');
+    args.push(options.localPort);
+  }
+  if (options.deployUrl !== undefined) {
+    updates.push('deploy_url = ?');
+    args.push(options.deployUrl);
+  }
+
+  args.push(id);
+  await db.execute({
+    sql: `UPDATE build_projects SET ${updates.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+export async function addBuildLog(
+  projectId: string,
+  phase: BuildStatus,
+  message: string
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO build_logs (id, project_id, phase, message)
+          VALUES (?, ?, ?, ?)`,
+    args: [id, projectId, phase, message],
+  });
+  return id;
+}
+
+export async function getBuildLogs(projectId: string): Promise<BuildLogEntry[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM build_logs WHERE project_id = ? ORDER BY timestamp ASC',
+    args: [projectId],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    projectId: row.project_id as string,
+    phase: row.phase as BuildStatus,
+    message: row.message as string,
+    timestamp: new Date(row.timestamp as string),
+  }));
+}
+
+export async function deleteBuildProject(id: string): Promise<void> {
+  const db = getDb();
+  // Logs will be deleted via CASCADE
+  await db.execute({
+    sql: 'DELETE FROM build_projects WHERE id = ?',
+    args: [id],
+  });
 }
 
 export default getDb;
