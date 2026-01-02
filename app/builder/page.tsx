@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import PasscodeGate from '@/components/PasscodeGate';
 import BuildProgressBar from '@/components/BuildProgressBar';
 import BuildPhaseFlow from '@/components/BuildPhaseFlow';
 import BuildPreview from '@/components/BuildPreview';
+import BuildActivityFeed from '@/components/BuildActivityFeed';
+import BuildFileTree, { type FileNode } from '@/components/BuildFileTree';
+import FileContentViewer from '@/components/FileContentViewer';
+import type { BuildActivity } from '@/lib/buildActivityParser';
 import type { BuildProject, BuildLogEntry, BuildProgressEvent, ProjectType, DeployTarget, BuildStatus } from '@/types/build';
 
 export default function BuilderDashboard() {
@@ -23,6 +27,19 @@ export default function BuilderDashboard() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState('');
+
+  // Fine control - Activity Feed
+  const [activities, setActivities] = useState<BuildActivity[]>([]);
+
+  // Fine control - File Explorer
+  const [fileTree, setFileTree] = useState<FileNode | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+
+  // Panel visibility
+  const [showActivityFeed, setShowActivityFeed] = useState(true);
+  const [showFileExplorer, setShowFileExplorer] = useState(true);
 
   // New project form state
   const [newProjectDescription, setNewProjectDescription] = useState('');
@@ -46,6 +63,24 @@ export default function BuilderDashboard() {
         const data = JSON.parse(event.data);
         // Skip connection messages
         if (data.type === 'connected') return;
+
+        // Handle activity events
+        if (data.type === 'activity' && data.activity) {
+          setActivities(prev => {
+            const existing = prev.findIndex(a => a.id === data.activity.id);
+            if (existing >= 0) {
+              const updated = [...prev];
+              updated[existing] = data.activity;
+              return updated;
+            }
+            return [...prev, data.activity];
+          });
+          // Refresh file tree on file changes
+          if (['file_write', 'file_edit'].includes(data.activity.type)) {
+            fetchFileTree(selectedProject);
+          }
+        }
+
         const progressEvent = data as BuildProgressEvent;
 
         // Update progress state
@@ -64,6 +99,7 @@ export default function BuilderDashboard() {
         // Refresh projects if status changed
         if (progressEvent.phase === 'complete' || progressEvent.phase === 'failed') {
           fetchProjects();
+          fetchFileTree(selectedProject);
           setIsBuilding(false);
         }
       } catch (e) {
@@ -108,11 +144,49 @@ export default function BuilderDashboard() {
     }
   }, []);
 
+  const fetchFileTree = useCallback(async (projectId: string) => {
+    try {
+      const response = await fetch(`/api/build/${projectId}/files`);
+      const data = await response.json();
+      if (data.success) {
+        setFileTree(data.tree);
+      }
+    } catch (error) {
+      console.error('Failed to fetch file tree:', error);
+    }
+  }, []);
+
+  const fetchFileContent = useCallback(async (projectId: string, filePath: string) => {
+    setFileLoading(true);
+    try {
+      const response = await fetch(`/api/build/${projectId}/files/${encodeURIComponent(filePath)}`);
+      const data = await response.json();
+      if (data.success) {
+        setFileContent(data.content);
+        setSelectedFile(filePath);
+      }
+    } catch (error) {
+      console.error('Failed to fetch file content:', error);
+    } finally {
+      setFileLoading(false);
+    }
+  }, []);
+
   const handleSelectProject = (projectId: string) => {
     setSelectedProject(projectId);
     setLogs([]);
+    setActivities([]);
+    setFileTree(null);
+    setFileContent(null);
+    setSelectedFile(null);
     setCurrentProgress(undefined);
     fetchProjectLogs(projectId);
+    fetchFileTree(projectId);
+  };
+
+  const handleFileSelect = (node: FileNode) => {
+    if (!selectedProject || node.isDirectory) return;
+    fetchFileContent(selectedProject, node.relativePath);
   };
 
   const handleStartBuild = async (e: React.FormEvent) => {
@@ -284,36 +358,39 @@ export default function BuilderDashboard() {
 
         <div className="flex h-[calc(100vh-73px)]">
           {/* Sidebar - Project List */}
-          <aside className="w-72 bg-gray-800 border-r border-gray-700 overflow-y-auto flex-shrink-0">
-            <div className="p-4">
-              <h2 className="text-lg font-semibold mb-4">Projects</h2>
+          <aside className="w-64 bg-gray-800 border-r border-gray-700 overflow-y-auto flex-shrink-0">
+            <div className="p-3">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-300">Projects</h2>
+                <span className="text-xs text-gray-500">{projects.length}</span>
+              </div>
 
               {projects.length === 0 ? (
-                <p className="text-gray-500 text-sm">No projects yet. Start your first build!</p>
+                <p className="text-gray-500 text-xs">No projects yet</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {projects.map(project => (
                     <button
                       key={project.id}
                       onClick={() => handleSelectProject(project.id)}
-                      className={`w-full text-left p-3 rounded-lg transition ${
+                      className={`w-full text-left p-2 rounded-lg transition ${
                         selectedProject === project.id
                           ? 'bg-purple-600/30 border border-purple-500'
-                          : 'bg-gray-700 hover:bg-gray-600 border border-transparent'
+                          : 'bg-gray-700/50 hover:bg-gray-700 border border-transparent'
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium truncate flex-1">
-                          {project.description.slice(0, 30)}...
-                        </span>
-                        <span className={`text-xs px-2 py-0.5 rounded border ${getStatusBadge(project.status)}`}>
-                          {project.status}
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-xs font-medium truncate flex-1 text-gray-200">
+                          {project.description.slice(0, 25)}...
                         </span>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        <span className="bg-gray-600 px-1.5 py-0.5 rounded">{project.projectType}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getStatusBadge(project.status)}`}>
+                          {project.status}
+                        </span>
+                        <span className="text-[10px] text-gray-500">{project.projectType}</span>
                         {project.localPort && (
-                          <span className="text-blue-400">:{project.localPort}</span>
+                          <span className="text-[10px] text-blue-400">:{project.localPort}</span>
                         )}
                       </div>
                     </button>
@@ -487,15 +564,112 @@ export default function BuilderDashboard() {
             </div>
           </main>
 
-          {/* Preview Panel */}
-          {selectedProjectData?.localPort && (
-            <aside className="w-96 border-l border-gray-700 flex-shrink-0">
-              <BuildPreview
-                port={selectedProjectData.localPort}
-                projectId={selectedProject || ''}
-                isComplete={selectedProjectData.status === 'complete'}
-              />
+          {/* Activity Feed Panel */}
+          {showActivityFeed && selectedProject && (
+            <aside className="w-72 border-l border-gray-700 flex-shrink-0 bg-gray-800/50 flex flex-col">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                <span className="text-sm font-medium text-gray-300">Activity</span>
+                <button
+                  onClick={() => setShowActivityFeed(false)}
+                  className="p-1 text-gray-500 hover:text-gray-300"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <BuildActivityFeed
+                  activities={activities}
+                  maxHeight="calc(100vh - 140px)"
+                  onActivityClick={(activity) => {
+                    if (activity.filePath && selectedProject) {
+                      fetchFileContent(selectedProject, activity.filePath.replace(/^.*[/\\]/, ''));
+                    }
+                  }}
+                />
+              </div>
             </aside>
+          )}
+
+          {/* File Explorer & Preview Panel */}
+          {showFileExplorer && selectedProject && (
+            <aside className="w-80 border-l border-gray-700 flex-shrink-0 bg-gray-800/50 flex flex-col">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-300">Files</span>
+                  {selectedProjectData?.localPort && (
+                    <a
+                      href={`http://localhost:${selectedProjectData.localPort}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs px-2 py-0.5 bg-blue-600 hover:bg-blue-500 rounded transition"
+                    >
+                      Preview :{ selectedProjectData.localPort}
+                    </a>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowFileExplorer(false)}
+                  className="p-1 text-gray-500 hover:text-gray-300"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* File Tree */}
+              <div className="h-48 overflow-y-auto border-b border-gray-700">
+                <BuildFileTree
+                  tree={fileTree}
+                  onFileSelect={handleFileSelect}
+                  selectedPath={selectedFile || undefined}
+                  maxHeight="100%"
+                />
+              </div>
+
+              {/* File Content Viewer */}
+              <div className="flex-1 overflow-hidden">
+                <FileContentViewer
+                  content={fileContent}
+                  filename={selectedFile || ''}
+                  isLoading={fileLoading}
+                  onClose={() => {
+                    setSelectedFile(null);
+                    setFileContent(null);
+                  }}
+                />
+              </div>
+            </aside>
+          )}
+
+          {/* Toggle buttons for hidden panels */}
+          {(!showActivityFeed || !showFileExplorer) && selectedProject && (
+            <div className="fixed right-4 top-20 flex flex-col gap-2 z-10">
+              {!showActivityFeed && (
+                <button
+                  onClick={() => setShowActivityFeed(true)}
+                  className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg shadow-lg"
+                  title="Show Activity Feed"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </button>
+              )}
+              {!showFileExplorer && (
+                <button
+                  onClick={() => setShowFileExplorer(true)}
+                  className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg shadow-lg"
+                  title="Show File Explorer"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                  </svg>
+                </button>
+              )}
+            </div>
           )}
         </div>
 

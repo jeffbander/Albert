@@ -1,18 +1,27 @@
 /**
  * Claude Code Client - Wrapper around the Claude Agent SDK
  * Provides a clean interface for running Claude Code sessions programmatically.
+ * Enhanced with real-time activity tracking for fine control over builds.
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { BuildStatus, ProjectType } from '@/types/build';
+import {
+  type BuildActivity,
+  parseStreamEvent,
+  updateActivityWithInput,
+  completeActivity,
+  ActivityTracker,
+} from './buildActivityParser';
 
 export interface ClaudeCodeMessage {
-  type: 'system' | 'assistant' | 'stream_event' | 'result';
+  type: 'system' | 'assistant' | 'stream_event' | 'result' | 'activity';
   content?: string;
   event?: string;
   result?: string;
   cost?: number;
   error?: string;
+  activity?: BuildActivity;
 }
 
 export interface ClaudeCodeOptions {
@@ -21,6 +30,8 @@ export interface ClaudeCodeOptions {
   maxBudgetUsd?: number;
   maxTurns?: number;
   onMessage?: (message: ClaudeCodeMessage) => void;
+  onActivity?: (activity: BuildActivity) => void;
+  activityTracker?: ActivityTracker;
 }
 
 /**
@@ -103,18 +114,29 @@ ${contextSection}
 Begin building the project now.`;
 }
 
+// Track active queries for pause/resume capability
+const activeQueries = new Map<string, { query: AsyncIterable<unknown>; sessionId?: string }>();
+
 /**
  * Run Claude Code with a prompt and stream results
+ * Now includes real-time activity tracking for fine control
  */
 export async function runClaudeCode(
   prompt: string,
   options: ClaudeCodeOptions
-): Promise<{ success: boolean; result?: string; error?: string; cost?: number }> {
+): Promise<{ success: boolean; result?: string; error?: string; cost?: number; sessionId?: string }> {
   try {
     let finalResult: string | undefined;
     let totalCost: number | undefined;
     let hasError = false;
     let errorMessage: string | undefined;
+    let sessionId: string | undefined;
+
+    // Activity tracking state
+    const tracker = options.activityTracker || new ActivityTracker();
+    const pendingActivities = new Map<string, BuildActivity>();
+    let currentToolUseId: string | undefined;
+    let currentToolInput: Record<string, unknown> = {};
 
     const toolsToUse = options.tools || DEFAULT_BUILD_TOOLS;
     const result = query({
@@ -133,22 +155,85 @@ export async function runClaudeCode(
     for await (const message of result) {
       switch (message.type) {
         case 'system':
+          sessionId = (message as { session_id?: string }).session_id;
+          if (sessionId) {
+            activeQueries.set(sessionId, { query: result, sessionId });
+          }
           options.onMessage?.({
             type: 'system',
-            content: `Session initialized: ${message.session_id}`,
+            content: `Session initialized: ${sessionId}`,
           });
           break;
 
         case 'stream_event':
+          // Parse the stream event for activity tracking
+          const event = (message as { event?: unknown }).event;
+          if (event) {
+            const activity = parseStreamEvent(event);
+            if (activity) {
+              // Track the activity
+              if (activity.type !== 'complete') {
+                pendingActivities.set(activity.id, activity);
+                currentToolUseId = activity.id;
+                currentToolInput = {};
+              }
+
+              tracker.upsert(activity);
+              options.onActivity?.(activity);
+              options.onMessage?.({
+                type: 'activity',
+                activity,
+              });
+            }
+
+            // Handle tool input accumulation
+            const evt = event as Record<string, unknown>;
+            if (evt.type === 'content_block_delta') {
+              const delta = evt.delta as Record<string, unknown> | undefined;
+              if (delta?.type === 'input_json_delta' && currentToolUseId) {
+                // Accumulate partial JSON input
+                const partialJson = delta.partial_json as string;
+                if (partialJson) {
+                  try {
+                    // Try to parse accumulated input
+                    Object.assign(currentToolInput, JSON.parse(partialJson));
+                    const pendingActivity = pendingActivities.get(currentToolUseId);
+                    if (pendingActivity) {
+                      const updated = updateActivityWithInput(pendingActivity, currentToolInput);
+                      pendingActivities.set(currentToolUseId, updated);
+                      tracker.upsert(updated);
+                      options.onActivity?.(updated);
+                    }
+                  } catch {
+                    // Partial JSON, ignore parse errors
+                  }
+                }
+              }
+            }
+
+            // Handle tool completion
+            if (evt.type === 'content_block_stop' && currentToolUseId) {
+              const pendingActivity = pendingActivities.get(currentToolUseId);
+              if (pendingActivity) {
+                const completed = completeActivity(pendingActivity, true);
+                pendingActivities.delete(currentToolUseId);
+                tracker.upsert(completed);
+                options.onActivity?.(completed);
+              }
+              currentToolUseId = undefined;
+              currentToolInput = {};
+            }
+          }
+
           options.onMessage?.({
             type: 'stream_event',
-            event: JSON.stringify(message.event),
+            event: JSON.stringify(event),
           });
           break;
 
         case 'assistant':
           // Extract text content from the message
-          const content = message.message?.content;
+          const content = (message as { message?: { content?: unknown } }).message?.content;
           if (content) {
             const textContent = Array.isArray(content)
               ? content
@@ -165,17 +250,18 @@ export async function runClaudeCode(
           break;
 
         case 'result':
-          if (message.subtype === 'success') {
-            finalResult = message.result;
-            totalCost = message.total_cost_usd;
+          const resultMessage = message as { subtype?: string; result?: string; total_cost_usd?: number; error?: string };
+          if (resultMessage.subtype === 'success') {
+            finalResult = resultMessage.result;
+            totalCost = resultMessage.total_cost_usd;
             options.onMessage?.({
               type: 'result',
-              result: message.result,
-              cost: message.total_cost_usd,
+              result: resultMessage.result,
+              cost: resultMessage.total_cost_usd,
             });
-          } else if (message.subtype?.startsWith('error')) {
+          } else if (resultMessage.subtype?.startsWith('error')) {
             hasError = true;
-            errorMessage = (message as { error?: string }).error || `Error: ${message.subtype}`;
+            errorMessage = resultMessage.error || `Error: ${resultMessage.subtype}`;
             options.onMessage?.({
               type: 'result',
               error: errorMessage,
@@ -185,11 +271,16 @@ export async function runClaudeCode(
       }
     }
 
-    if (hasError) {
-      return { success: false, error: errorMessage, cost: totalCost };
+    // Clean up active query
+    if (sessionId) {
+      activeQueries.delete(sessionId);
     }
 
-    return { success: true, result: finalResult, cost: totalCost };
+    if (hasError) {
+      return { success: false, error: errorMessage, cost: totalCost, sessionId };
+    }
+
+    return { success: true, result: finalResult, cost: totalCost, sessionId };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     options.onMessage?.({
@@ -201,7 +292,15 @@ export async function runClaudeCode(
 }
 
 /**
+ * Get list of active sessions
+ */
+export function getActiveSessions(): string[] {
+  return Array.from(activeQueries.keys());
+}
+
+/**
  * Build a project using Claude Code
+ * Enhanced with activity tracking for real-time visibility
  */
 export async function buildProject(
   description: string,
@@ -210,10 +309,12 @@ export async function buildProject(
   options: {
     preferredStack?: string;
     onMessage?: (message: ClaudeCodeMessage) => void;
+    onActivity?: (activity: BuildActivity) => void;
+    activityTracker?: ActivityTracker;
     maxBudgetUsd?: number;
     buildContext?: string; // Past patterns, preferences, and lessons learned
   } = {}
-): Promise<{ success: boolean; error?: string; cost?: number; prompt?: string }> {
+): Promise<{ success: boolean; error?: string; cost?: number; prompt?: string; sessionId?: string }> {
   const prompt = generateBuildPrompt(
     description,
     projectType,
@@ -224,6 +325,8 @@ export async function buildProject(
   const result = await runClaudeCode(prompt, {
     cwd: workspacePath,
     onMessage: options.onMessage,
+    onActivity: options.onActivity,
+    activityTracker: options.activityTracker,
     maxBudgetUsd: options.maxBudgetUsd || 10.0,
   });
 
@@ -239,9 +342,11 @@ export async function modifyProject(
   workspacePath: string,
   options: {
     onMessage?: (message: ClaudeCodeMessage) => void;
+    onActivity?: (activity: BuildActivity) => void;
+    activityTracker?: ActivityTracker;
     maxBudgetUsd?: number;
   } = {}
-): Promise<{ success: boolean; error?: string; cost?: number }> {
+): Promise<{ success: boolean; error?: string; cost?: number; sessionId?: string }> {
   const prompt = `You are modifying an existing project. The project is already set up in this directory.
 
 ## Requested Changes
@@ -259,6 +364,8 @@ Begin making the changes now.`;
   return runClaudeCode(prompt, {
     cwd: workspacePath,
     onMessage: options.onMessage,
+    onActivity: options.onActivity,
+    activityTracker: options.activityTracker,
     maxBudgetUsd: options.maxBudgetUsd || 5.0,
   });
 }
@@ -270,8 +377,10 @@ export async function testProject(
   workspacePath: string,
   options: {
     onMessage?: (message: ClaudeCodeMessage) => void;
+    onActivity?: (activity: BuildActivity) => void;
+    activityTracker?: ActivityTracker;
   } = {}
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; sessionId?: string }> {
   const prompt = `You are testing an existing project to ensure it works correctly.
 
 IMPORTANT: The project is in YOUR CURRENT WORKING DIRECTORY. Do NOT navigate elsewhere.
@@ -289,7 +398,12 @@ Do NOT search for projects elsewhere. The project files are HERE in your current
   return runClaudeCode(prompt, {
     cwd: workspacePath,
     onMessage: options.onMessage,
+    onActivity: options.onActivity,
+    activityTracker: options.activityTracker,
     maxBudgetUsd: 2.0,
     maxTurns: 20,
   });
 }
+
+// Re-export types and utilities for consumers
+export { type BuildActivity, ActivityTracker, getActivityTracker } from './buildActivityParser';

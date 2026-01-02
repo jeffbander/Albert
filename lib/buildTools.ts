@@ -244,6 +244,64 @@ export const BUILD_TOOLS: OpenAITool[] = [
       required: [],
     },
   },
+  {
+    type: 'function',
+    name: 'read_project_file',
+    description: 'Read the contents of a specific file from a build project. Use this when you need to understand what was created, check the code, or answer questions about specific files in a project.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project containing the file.',
+        },
+        filePath: {
+          type: 'string',
+          description: 'The relative path to the file within the project (e.g., "src/App.tsx", "package.json").',
+        },
+      },
+      required: ['projectId', 'filePath'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_project_files',
+    description: 'List all files in a build project. Use this to see what files exist in a project, understand the project structure, or before reading specific files.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project to list files for.',
+        },
+      },
+      required: ['projectId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'guide_build',
+    description: 'Give Claude Code specific guidance during an active build. Use this when you see something going wrong, want to redirect the approach, or need to provide additional context mid-build.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project currently being built.',
+        },
+        guidance: {
+          type: 'string',
+          description: 'Specific instructions or guidance for Claude Code to follow.',
+        },
+        action: {
+          type: 'string',
+          enum: ['continue', 'pause', 'restart_step'],
+          description: 'What action to take. continue: apply guidance and keep building, pause: stop for review, restart_step: redo the current step with guidance.',
+        },
+      },
+      required: ['projectId', 'guidance', 'action'],
+    },
+  },
 ];
 
 /**
