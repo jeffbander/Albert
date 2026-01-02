@@ -31,8 +31,14 @@ import {
   buildProject as claudeBuildProject,
   modifyProject as claudeModifyProject,
   testProject as claudeTestProject,
+  generateBuildPrompt,
   type ClaudeCodeMessage,
 } from '@/lib/claudeCodeClient';
+import {
+  saveBuildPattern,
+  savePreferencesFromBuild,
+  getBuildContext,
+} from '@/lib/buildMemory';
 
 // Global event emitter for build progress
 const buildEvents = new EventEmitter();
@@ -56,7 +62,7 @@ export function subscribeToBuildProgress(
 /**
  * Emit a build progress event
  */
-function emitProgress(
+export function emitBuildProgress(
   projectId: string,
   phase: BuildStatus,
   message: string,
@@ -90,6 +96,7 @@ export async function startBuild(options: {
 
   // Create database record
   await createBuildProject(
+    projectId,
     options.description,
     options.projectType,
     workspacePath,
@@ -105,7 +112,13 @@ export async function startBuild(options: {
     await updateBuildProjectStatus(projectId, 'failed', {
       error: error instanceof Error ? error.message : String(error),
     });
-    emitProgress(projectId, 'failed', `Build failed: ${error.message}`);
+    emitBuildProgress(projectId, 'failed', `Build failed: ${error.message}`);
+
+    // Save failed build pattern to memory (for Albert's learning)
+    const project = await getBuildProject(projectId);
+    if (project) {
+      await saveBuildPattern(project, false);
+    }
   });
 
   return projectId;
@@ -124,16 +137,24 @@ async function executeBuild(
   }
 ): Promise<void> {
   const workspacePath = getWorkspacePath(projectId);
+  const buildStartTime = Date.now();
 
-  // Phase 1: Planning
+  // Phase 1: Planning (includes fetching build context from memory)
   await updateBuildProjectStatus(projectId, 'planning');
   await addBuildLog(projectId, 'planning', 'Analyzing requirements...');
-  emitProgress(projectId, 'planning', 'Analyzing requirements and planning project structure...', 10);
+  emitBuildProgress(projectId, 'planning', 'Analyzing requirements and planning project structure...', 10);
+
+  // Fetch build context from memory (past patterns, preferences, lessons learned)
+  const buildContext = await getBuildContext(options.description, options.projectType);
+  if (buildContext !== 'No prior build context available.') {
+    await addBuildLog(projectId, 'planning', 'Found relevant build patterns from past experience');
+    emitBuildProgress(projectId, 'planning', 'Using past experience to inform this build...', 15);
+  }
 
   // Phase 2: Building with Claude Code
   await updateBuildProjectStatus(projectId, 'building');
   await addBuildLog(projectId, 'building', 'Starting Claude Code build...');
-  emitProgress(projectId, 'building', 'Claude Code is building your project...', 20);
+  emitBuildProgress(projectId, 'building', 'Claude Code is building your project...', 20);
 
   const buildResult = await claudeBuildProject(
     options.description,
@@ -141,16 +162,24 @@ async function executeBuild(
     workspacePath,
     {
       preferredStack: options.preferredStack,
+      buildContext, // Pass learned context to Claude Code
       onMessage: async (msg: ClaudeCodeMessage) => {
         // Log significant messages
         if (msg.type === 'assistant' && msg.content) {
           const preview = msg.content.slice(0, 200);
           await addBuildLog(projectId, 'building', preview);
-          emitProgress(projectId, 'building', preview, 50);
+          emitBuildProgress(projectId, 'building', preview, 50);
         }
       },
     }
   );
+
+  // Save the actual prompt that was sent to Claude Code
+  if (buildResult.prompt) {
+    await updateBuildProjectStatus(projectId, 'building', {
+      buildPrompt: buildResult.prompt,
+    });
+  }
 
   if (!buildResult.success) {
     throw new Error(buildResult.error || 'Build failed');
@@ -159,7 +188,7 @@ async function executeBuild(
   // Phase 3: Testing
   await updateBuildProjectStatus(projectId, 'testing');
   await addBuildLog(projectId, 'testing', 'Testing project...');
-  emitProgress(projectId, 'testing', 'Verifying project works correctly...', 70);
+  emitBuildProgress(projectId, 'testing', 'Verifying project works correctly...', 70);
 
   const testResult = await claudeTestProject(workspacePath, {
     onMessage: async (msg: ClaudeCodeMessage) => {
@@ -176,7 +205,7 @@ async function executeBuild(
 
   // Phase 4: Deploying
   await updateBuildProjectStatus(projectId, 'deploying');
-  emitProgress(projectId, 'deploying', 'Starting deployment...', 85);
+  emitBuildProgress(projectId, 'deploying', 'Starting deployment...', 85);
 
   const deployTarget = options.deployTarget || 'localhost';
 
@@ -185,12 +214,20 @@ async function executeBuild(
     const port = await startDevServer(projectId, workspacePath);
     await updateBuildProjectStatus(projectId, 'complete', { localPort: port });
     await addBuildLog(projectId, 'complete', `Project running at http://localhost:${port}`);
-    emitProgress(projectId, 'complete', `Build complete! Running at http://localhost:${port}`, 100);
+    emitBuildProgress(projectId, 'complete', `Build complete! Running at http://localhost:${port}`, 100);
   } else {
     // Deploy to Vercel (will be implemented)
     await addBuildLog(projectId, 'deploying', 'Vercel deployment not yet implemented');
     await updateBuildProjectStatus(projectId, 'complete');
-    emitProgress(projectId, 'complete', 'Build complete! (Vercel deployment pending)', 100);
+    emitBuildProgress(projectId, 'complete', 'Build complete! (Vercel deployment pending)', 100);
+  }
+
+  // Save build pattern and preferences to memory (for Albert's learning)
+  const buildDuration = Date.now() - buildStartTime;
+  const project = await getBuildProject(projectId);
+  if (project) {
+    await saveBuildPattern(project, true, buildDuration);
+    await savePreferencesFromBuild(project);
   }
 }
 
@@ -286,13 +323,13 @@ export async function modifyExistingProject(
   }
 
   await updateBuildProjectStatus(projectId, 'building');
-  emitProgress(projectId, 'building', 'Applying changes...');
+  emitBuildProgress(projectId, 'building', 'Applying changes...');
 
   const result = await claudeModifyProject(changeDescription, project.workspacePath, {
     onMessage: async (msg: ClaudeCodeMessage) => {
       if (msg.type === 'assistant' && msg.content) {
         await addBuildLog(projectId, 'building', msg.content.slice(0, 200));
-        emitProgress(projectId, 'building', msg.content.slice(0, 100));
+        emitBuildProgress(projectId, 'building', msg.content.slice(0, 100));
       }
     },
   });
@@ -303,7 +340,7 @@ export async function modifyExistingProject(
   }
 
   await updateBuildProjectStatus(projectId, 'complete');
-  emitProgress(projectId, 'complete', 'Changes applied successfully!');
+  emitBuildProgress(projectId, 'complete', 'Changes applied successfully!');
 }
 
 /**
@@ -344,4 +381,85 @@ export async function deleteProject(projectId: string): Promise<void> {
 export async function getMostRecentProject(): Promise<BuildProject | null> {
   const projects = await getAllBuildProjects();
   return projects[0] || null;
+}
+
+// Track active build abort controllers
+const activeBuildControllers = new Map<string, AbortController>();
+
+/**
+ * Register an abort controller for a build
+ */
+export function registerBuildController(projectId: string, controller: AbortController): void {
+  activeBuildControllers.set(projectId, controller);
+}
+
+/**
+ * Unregister an abort controller
+ */
+export function unregisterBuildController(projectId: string): void {
+  activeBuildControllers.delete(projectId);
+}
+
+/**
+ * Cancel a running build
+ */
+export async function cancelBuild(projectId: string): Promise<boolean> {
+  const controller = activeBuildControllers.get(projectId);
+
+  // Stop any running dev server
+  stopDevServer(projectId);
+
+  // Update status
+  await updateBuildProjectStatus(projectId, 'failed', {
+    error: 'Build cancelled by user',
+  });
+  emitBuildProgress(projectId, 'failed', 'Build cancelled by user');
+
+  // If we have an abort controller, use it
+  if (controller) {
+    controller.abort();
+    activeBuildControllers.delete(projectId);
+    return true;
+  }
+
+  return true;
+}
+
+/**
+ * Retry a failed build with optional modifications
+ */
+export async function retryBuild(
+  projectId: string,
+  modifications?: string
+): Promise<string> {
+  const project = await getBuildProject(projectId);
+  if (!project) {
+    throw new Error(`Project ${projectId} not found`);
+  }
+
+  // Create a modified description if modifications were provided
+  let description = project.description;
+  if (modifications) {
+    description = `${project.description}\n\nIMPORTANT MODIFICATIONS FOR RETRY: ${modifications}`;
+  }
+
+  // Start a new build with the same settings
+  const newProjectId = await startBuild({
+    description,
+    projectType: project.projectType as ProjectType,
+    preferredStack: project.preferredStack || undefined,
+    deployTarget: (project.deployTarget as DeployTarget) || 'localhost',
+  });
+
+  return newProjectId;
+}
+
+/**
+ * Get the most recent running build
+ */
+export async function getMostRecentRunningBuild(): Promise<BuildProject | null> {
+  const projects = await getAllBuildProjects();
+  return projects.find(p =>
+    p.status === 'building' || p.status === 'planning' || p.status === 'testing' || p.status === 'deploying'
+  ) || null;
 }

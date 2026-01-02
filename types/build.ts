@@ -29,6 +29,7 @@ export interface BuildProject {
   localPort?: number;
   deployUrl?: string;
   error?: string;
+  buildPrompt?: string; // The actual prompt sent to Claude Code
   createdAt: Date;
   updatedAt: Date;
 }

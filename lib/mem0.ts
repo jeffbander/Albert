@@ -167,6 +167,7 @@ export interface Memory {
   created_at?: string;
   updated_at?: string;
   score?: number; // Relevance score from search
+  metadata?: Record<string, unknown>; // Custom metadata attached to the memory
 }
 
 export interface MemoryWithImportance extends Memory {

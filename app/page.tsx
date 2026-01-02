@@ -5,6 +5,15 @@ import EchoOrb, { EchoState } from '@/components/EchoOrb';
 import StatusIndicator from '@/components/StatusIndicator';
 import PasscodeGate from '@/components/PasscodeGate';
 import { useEagle } from '@/hooks/useEagle';
+import { BUILD_TOOLS } from '@/lib/buildTools';
+import {
+  subscribeToBuild,
+  unsubscribeAll,
+  formatProgressForVoice,
+  shouldNotifyVoice,
+} from '@/lib/buildProgressManager';
+import { onClarificationRequest } from '@/lib/interactiveSession';
+import type { BuildProgressEvent } from '@/types/build';
 
 interface ConversationMessage {
   id: string;
@@ -44,6 +53,13 @@ export default function Home() {
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const contextRef = useRef<ConversationContext | null>(null);
   const speakerIdRef = useRef<string | null>(null);
+  const pendingFunctionCallRef = useRef<{ callId: string; name: string; arguments: string } | null>(null);
+
+  // Build progress tracking
+  const activeBuildIdRef = useRef<string | null>(null);
+  const lastNotifiedPhaseRef = useRef<string | null>(null);
+  const buildUnsubscribeRef = useRef<(() => void) | null>(null);
+  const clarificationUnsubscribeRef = useRef<(() => void) | null>(null);
 
   // Voice identification
   const { loadSpeakers, identifySpeaker } = useEagle();
@@ -55,6 +71,19 @@ export default function Home() {
       clearTimeout(silenceTimeoutRef.current);
       silenceTimeoutRef.current = null;
     }
+
+    // Cleanup build subscriptions
+    if (buildUnsubscribeRef.current) {
+      buildUnsubscribeRef.current();
+      buildUnsubscribeRef.current = null;
+    }
+    if (clarificationUnsubscribeRef.current) {
+      clarificationUnsubscribeRef.current();
+      clarificationUnsubscribeRef.current = null;
+    }
+    unsubscribeAll();
+    activeBuildIdRef.current = null;
+    lastNotifiedPhaseRef.current = null;
 
     // End conversation if we have one
     if (conversationIdRef.current && startTimeRef.current) {
@@ -238,7 +267,7 @@ export default function Home() {
       };
 
       dc.onopen = () => {
-        // Send session configuration
+        // Send session configuration with build tools
         dc.send(JSON.stringify({
           type: 'session.update',
           session: {
@@ -246,6 +275,8 @@ export default function Home() {
             voice: 'echo',
             input_audio_transcription: { model: 'whisper-1' },
             turn_detection: { type: 'server_vad' },
+            tools: BUILD_TOOLS,
+            tool_choice: 'auto',
           },
         }));
 
@@ -302,6 +333,496 @@ export default function Home() {
       cleanup();
     }
   }, [cleanup, identifySpeakerFromStream]);
+
+  // Make Albert speak proactively (for build updates)
+  const speakProactively = useCallback((message: string) => {
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      // Create a text message item that Albert will read out
+      dcRef.current.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `[System: Build Update] ${message}. Please acknowledge this update briefly to the user.`,
+            },
+          ],
+        },
+      }));
+
+      // Request Albert to respond
+      dcRef.current.send(JSON.stringify({
+        type: 'response.create',
+      }));
+    }
+  }, []);
+
+  // Subscribe to build progress updates
+  const subscribeToBuildProgress = useCallback((projectId: string, projectDescription: string) => {
+    // Unsubscribe from previous build if any
+    if (buildUnsubscribeRef.current) {
+      buildUnsubscribeRef.current();
+    }
+    if (clarificationUnsubscribeRef.current) {
+      clarificationUnsubscribeRef.current();
+    }
+
+    activeBuildIdRef.current = projectId;
+    lastNotifiedPhaseRef.current = null;
+
+    const unsubscribe = subscribeToBuild(projectId, {
+      onProgress: (event: BuildProgressEvent) => {
+        // Only speak on significant changes
+        if (shouldNotifyVoice(event, lastNotifiedPhaseRef.current || undefined)) {
+          lastNotifiedPhaseRef.current = event.phase;
+          const voiceMessage = formatProgressForVoice(event);
+          console.log(`[Build Progress] ${event.phase}: ${voiceMessage}`);
+          speakProactively(voiceMessage);
+        }
+      },
+      onComplete: async (pid: string, success: boolean, message: string) => {
+        console.log(`[Build Complete] ${pid}: ${success ? 'Success' : 'Failed'} - ${message}`);
+
+        // Fetch project details so Albert has full context about what was built
+        let projectContext = '';
+        let memorySummary = '';
+        if (success) {
+          try {
+            const describeRes = await fetch(`/api/build/${pid}/describe`);
+            const describeData = await describeRes.json();
+            if (describeData.success && describeData.summary) {
+              projectContext = ` Here's what was built: ${describeData.summary}`;
+              memorySummary = describeData.summary;
+              if (describeData.files?.length > 0) {
+                const keyFiles = describeData.files.slice(0, 5).join(', ');
+                projectContext += ` Key files include: ${keyFiles}.`;
+              }
+            }
+          } catch (err) {
+            console.error('[Build Complete] Failed to fetch project details:', err);
+          }
+
+          // Save to Albert's memory so he remembers this build across conversations
+          try {
+            await fetch('/api/memory/add', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                content: `I built a project for the user: "${projectDescription}". ${memorySummary}`,
+                metadata: {
+                  type: 'build_completed',
+                  projectId: pid,
+                  description: projectDescription,
+                },
+              }),
+            });
+            console.log('[Build Complete] Saved build to memory');
+          } catch (err) {
+            console.error('[Build Complete] Failed to save to memory:', err);
+          }
+        }
+
+        speakProactively(success
+          ? `Great news! Your project "${projectDescription}" is now complete and running. ${message}${projectContext}`
+          : `I'm sorry, but there was an issue with the build. ${message}`
+        );
+        activeBuildIdRef.current = null;
+        buildUnsubscribeRef.current = null;
+        if (clarificationUnsubscribeRef.current) {
+          clarificationUnsubscribeRef.current();
+          clarificationUnsubscribeRef.current = null;
+        }
+      },
+      onError: (pid: string, error: string) => {
+        console.log(`[Build Error] ${pid}: ${error}`);
+        speakProactively(`Unfortunately, there was an error with the build: ${error}. You can ask me to retry with modifications.`);
+        activeBuildIdRef.current = null;
+        buildUnsubscribeRef.current = null;
+        if (clarificationUnsubscribeRef.current) {
+          clarificationUnsubscribeRef.current();
+          clarificationUnsubscribeRef.current = null;
+        }
+      },
+    });
+
+    buildUnsubscribeRef.current = unsubscribe;
+
+    // Also subscribe to clarification requests from interactive sessions
+    const clarificationUnsub = onClarificationRequest(projectId, (data) => {
+      console.log(`[Clarification Request] ${projectId}:`, data.question);
+      // Format the question for voice
+      const optionsText = data.options?.length
+        ? ` Options are: ${data.options.join(', ')}.`
+        : '';
+      speakProactively(
+        `I have a question about the build: ${data.question}${optionsText} Please tell me what you'd prefer.`
+      );
+    });
+    clarificationUnsubscribeRef.current = clarificationUnsub;
+  }, [speakProactively]);
+
+  // Execute function calls from the model
+  const executeFunctionCall = useCallback(async (callId: string, name: string, args: string) => {
+    console.log(`[FunctionCall] Executing: ${name}`, args);
+
+    let result = '';
+
+    try {
+      const parsedArgs = JSON.parse(args);
+
+      switch (name) {
+        case 'start_build_project': {
+          const response = await fetch('/api/build/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsedArgs),
+          });
+          const data = await response.json();
+          if (data.success) {
+            // Subscribe to build progress for proactive voice updates
+            subscribeToBuildProgress(data.projectId, parsedArgs.projectDescription);
+            result = JSON.stringify({
+              success: true,
+              message: `Build started! Project ID: ${data.projectId}. I'm now autonomously building "${parsedArgs.projectDescription}". I'll keep you updated on the progress and let you know when it's done.`,
+              projectId: data.projectId,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to start build' });
+          }
+          break;
+        }
+
+        case 'check_build_status': {
+          const projectId = parsedArgs.projectId;
+          let url = '/api/build/projects';
+          if (projectId) {
+            url = `/api/build/${projectId}/status`;
+          }
+          const response = await fetch(url);
+          const data = await response.json();
+          if (data.success) {
+            if (data.project) {
+              // Single project status
+              result = JSON.stringify({
+                success: true,
+                project: {
+                  id: data.project.id,
+                  description: data.project.description,
+                  status: data.project.status,
+                  projectType: data.project.projectType,
+                  localPort: data.project.localPort,
+                  deployUrl: data.project.deployUrl,
+                },
+                recentLogs: data.logs?.slice(-5) || [],
+              });
+            } else if (data.projects) {
+              // Most recent project
+              const latest = data.projects[0];
+              if (latest) {
+                result = JSON.stringify({
+                  success: true,
+                  message: `Most recent project: "${latest.description.slice(0, 50)}..." - Status: ${latest.status}`,
+                  project: latest,
+                });
+              } else {
+                result = JSON.stringify({ success: true, message: 'No projects found.' });
+              }
+            } else {
+              result = JSON.stringify({ success: true, message: 'No projects found.' });
+            }
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to get status' });
+          }
+          break;
+        }
+
+        case 'modify_project': {
+          const { projectId, changeDescription } = parsedArgs;
+          const response = await fetch(`/api/build/${projectId}/modify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ changeDescription }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Modification started for project ${projectId}. I'm implementing the changes: "${changeDescription}"`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to modify project' });
+          }
+          break;
+        }
+
+        case 'list_projects': {
+          const response = await fetch('/api/build/projects');
+          const data = await response.json();
+          if (data.success) {
+            const projects = data.projects.slice(0, parseInt(parsedArgs.limit) || 10);
+            result = JSON.stringify({
+              success: true,
+              count: projects.length,
+              projects: projects.map((p: { id: string; description: string; status: string; projectType: string; localPort?: number }) => ({
+                id: p.id,
+                description: p.description.slice(0, 50) + '...',
+                status: p.status,
+                type: p.projectType,
+                port: p.localPort,
+              })),
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: 'Failed to list projects' });
+          }
+          break;
+        }
+
+        case 'deploy_project': {
+          const { projectId, production } = parsedArgs;
+          const response = await fetch(`/api/build/${projectId}/deploy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ production: production === 'true' }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Deployed to Vercel! Your project is live at ${data.url}`,
+              url: data.url,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Deployment failed' });
+          }
+          break;
+        }
+
+        case 'push_to_github': {
+          const { projectId, owner, repo, commitMessage } = parsedArgs;
+          // Get GitHub username if owner not provided
+          const ghOwner = owner || 'jeffbander'; // Default to user's GitHub
+          const response = await fetch(`/api/build/${projectId}/github`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              owner: ghOwner,
+              repo,
+              commitMessage: commitMessage || `Built with Albert: ${repo}`,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Pushed to GitHub! Repository: ${data.repoUrl}`,
+              repoUrl: data.repoUrl,
+              commitHash: data.commitHash,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Push to GitHub failed' });
+          }
+          break;
+        }
+
+        case 'cancel_build': {
+          let targetProjectId = parsedArgs.projectId;
+          // If no project ID, get the most recent running build
+          if (!targetProjectId) {
+            const projectsRes = await fetch('/api/build/projects');
+            const projectsData = await projectsRes.json();
+            const runningBuild = projectsData.projects?.find((p: { status: string }) =>
+              ['building', 'planning', 'testing', 'deploying'].includes(p.status)
+            );
+            targetProjectId = runningBuild?.id;
+          }
+          if (!targetProjectId) {
+            result = JSON.stringify({ success: false, error: 'No running build found to cancel' });
+          } else {
+            // Unsubscribe from build progress if this was our active build
+            if (activeBuildIdRef.current === targetProjectId && buildUnsubscribeRef.current) {
+              buildUnsubscribeRef.current();
+              buildUnsubscribeRef.current = null;
+              activeBuildIdRef.current = null;
+            }
+            const response = await fetch(`/api/build/${targetProjectId}/cancel`, { method: 'POST' });
+            const data = await response.json();
+            result = JSON.stringify(data);
+          }
+          break;
+        }
+
+        case 'retry_build': {
+          const { projectId, modifications } = parsedArgs;
+          const response = await fetch(`/api/build/${projectId}/retry`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modifications }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            // Subscribe to the new build progress
+            subscribeToBuildProgress(data.newProjectId, modifications || 'Retried project');
+            result = JSON.stringify({
+              success: true,
+              message: `Retry started! New build ID: ${data.newProjectId}. I'll keep you updated on the progress.`,
+              newProjectId: data.newProjectId,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to retry build' });
+          }
+          break;
+        }
+
+        case 'open_project': {
+          let targetProjectId = parsedArgs.projectId;
+          // If no project ID, get the most recent completed project
+          if (!targetProjectId) {
+            const projectsRes = await fetch('/api/build/projects');
+            const projectsData = await projectsRes.json();
+            const completedBuild = projectsData.projects?.find((p: { status: string }) => p.status === 'complete');
+            targetProjectId = completedBuild?.id;
+          }
+          if (!targetProjectId) {
+            result = JSON.stringify({ success: false, error: 'No completed project found to open' });
+          } else {
+            const statusRes = await fetch(`/api/build/${targetProjectId}/status`);
+            const statusData = await statusRes.json();
+            if (statusData.success && statusData.project?.localPort) {
+              result = JSON.stringify({
+                success: true,
+                message: `The project is running at http://localhost:${statusData.project.localPort}. You can open it in your browser.`,
+                url: `http://localhost:${statusData.project.localPort}`,
+              });
+            } else if (statusData.project?.deployUrl) {
+              result = JSON.stringify({
+                success: true,
+                message: `The project is deployed at ${statusData.project.deployUrl}`,
+                url: statusData.project.deployUrl,
+              });
+            } else {
+              result = JSON.stringify({ success: false, error: 'Project is not currently running' });
+            }
+          }
+          break;
+        }
+
+        case 'describe_project': {
+          const { projectId } = parsedArgs;
+          const response = await fetch(`/api/build/${projectId}/describe`);
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              summary: data.summary,
+              files: data.files?.slice(0, 15),
+              readme: data.readme?.slice(0, 500),
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to describe project' });
+          }
+          break;
+        }
+
+        case 'respond_to_build': {
+          const { projectId, response: userResponse } = parsedArgs;
+          const apiResponse = await fetch(`/api/build/${projectId}/respond`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ response: userResponse }),
+          });
+          const data = await apiResponse.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Response sent to the build. Continuing with: "${userResponse}"`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to send response' });
+          }
+          break;
+        }
+
+        case 'get_pending_question': {
+          const { projectId } = parsedArgs;
+          if (projectId) {
+            const response = await fetch(`/api/build/${projectId}/respond`);
+            const data = await response.json();
+            if (data.success && data.hasActiveSession && data.session?.pendingQuestion) {
+              result = JSON.stringify({
+                success: true,
+                hasPendingQuestion: true,
+                question: data.session.pendingQuestion,
+                projectId,
+              });
+            } else {
+              result = JSON.stringify({
+                success: true,
+                hasPendingQuestion: false,
+                message: 'No pending question for this project.',
+              });
+            }
+          } else {
+            // Check all active builds for pending questions
+            const projectsRes = await fetch('/api/build/projects');
+            const projectsData = await projectsRes.json();
+            const activeProjects = projectsData.projects?.filter((p: { status: string }) =>
+              ['building', 'planning', 'testing'].includes(p.status)
+            ) || [];
+
+            for (const project of activeProjects) {
+              const response = await fetch(`/api/build/${project.id}/respond`);
+              const data = await response.json();
+              if (data.success && data.hasActiveSession && data.session?.pendingQuestion) {
+                result = JSON.stringify({
+                  success: true,
+                  hasPendingQuestion: true,
+                  question: data.session.pendingQuestion,
+                  projectId: project.id,
+                  projectDescription: project.description,
+                });
+                break;
+              }
+            }
+
+            if (!result) {
+              result = JSON.stringify({
+                success: true,
+                hasPendingQuestion: false,
+                message: 'No pending questions from any active builds.',
+              });
+            }
+          }
+          break;
+        }
+
+        default:
+          result = JSON.stringify({ error: `Unknown function: ${name}` });
+      }
+    } catch (err) {
+      console.error(`[FunctionCall] Error executing ${name}:`, err);
+      result = JSON.stringify({ error: err instanceof Error ? err.message : 'Function execution failed' });
+    }
+
+    // Send the function result back to the conversation
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      // First, create a function call output item
+      dcRef.current.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: callId,
+          output: result,
+        },
+      }));
+
+      // Then request a response so Albert speaks the result
+      dcRef.current.send(JSON.stringify({
+        type: 'response.create',
+      }));
+    }
+  }, [subscribeToBuildProgress]);
 
   // Handle realtime events from OpenAI
   const handleRealtimeEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
@@ -369,6 +890,21 @@ export default function Home() {
             setShowFeedback(false);
           }, 10000);
         }
+        break;
+
+      case 'response.function_call_arguments.done':
+        // Store the function call info for execution
+        pendingFunctionCallRef.current = {
+          callId: event.call_id as string,
+          name: event.name as string,
+          arguments: event.arguments as string,
+        };
+        // Execute the function call
+        executeFunctionCall(
+          event.call_id as string,
+          event.name as string,
+          event.arguments as string
+        );
         break;
 
       case 'error':
@@ -448,12 +984,26 @@ export default function Home() {
           </a>
           <a
             href="/graph"
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-sm text-gray-400 hover:text-purple-400 transition-colors flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
             Knowledge Graph
+          </a>
+          <a
+            href="/builder"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-2"
+            title="Albert Builder Dashboard"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            Builder
           </a>
           <StatusIndicator state={state} isConnected={isConnected} />
         </div>

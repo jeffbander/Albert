@@ -17,7 +17,7 @@ export interface ClaudeCodeMessage {
 
 export interface ClaudeCodeOptions {
   cwd: string;
-  allowedTools?: string[];
+  tools?: string[];
   maxBudgetUsd?: number;
   maxTurns?: number;
   onMessage?: (message: ClaudeCodeMessage) => void;
@@ -43,7 +43,8 @@ const DEFAULT_BUILD_TOOLS = [
 export function generateBuildPrompt(
   description: string,
   projectType: ProjectType,
-  preferredStack?: string
+  preferredStack?: string,
+  buildContext?: string
 ): string {
   const stackHint = preferredStack
     ? `The user prefers: ${preferredStack}. Use these technologies if appropriate.`
@@ -57,6 +58,16 @@ export function generateBuildPrompt(
     'full-stack': 'Create a full-stack application with both frontend and backend. Use Next.js with API routes, or separate frontend/backend. Include database setup if needed.',
   };
 
+  // Include build context if available (past patterns, preferences, lessons learned)
+  const contextSection = buildContext && buildContext !== 'No prior build context available.'
+    ? `
+## Build Context (from past experience)
+${buildContext}
+
+Use this context to inform your decisions - follow patterns that worked well, avoid past mistakes, and respect user preferences.
+`
+    : '';
+
   return `You are building a software project autonomously. Follow these guidelines:
 
 ## Project Description
@@ -66,7 +77,7 @@ ${description}
 ${typeGuidelines[projectType]}
 
 ${stackHint}
-
+${contextSection}
 ## Guidelines
 1. Create a complete, working project - not just scaffolding
 2. Include a README.md with setup and run instructions
@@ -99,14 +110,16 @@ export async function runClaudeCode(
     let hasError = false;
     let errorMessage: string | undefined;
 
+    const toolsToUse = options.tools || DEFAULT_BUILD_TOOLS;
     const result = query({
       prompt,
       options: {
         cwd: options.cwd,
-        allowedTools: options.allowedTools || DEFAULT_BUILD_TOOLS,
+        tools: toolsToUse,
+        allowedTools: toolsToUse, // Auto-allow these tools without prompting
         permissionMode: 'acceptEdits', // Auto-accept file edits
-        maxBudgetUsd: options.maxBudgetUsd || 10.0,
-        maxTurns: options.maxTurns || 50,
+        maxBudgetUsd: options.maxBudgetUsd || 15.0,
+        maxTurns: options.maxTurns || 100,
         includePartialMessages: true,
       },
     });
@@ -192,15 +205,24 @@ export async function buildProject(
     preferredStack?: string;
     onMessage?: (message: ClaudeCodeMessage) => void;
     maxBudgetUsd?: number;
+    buildContext?: string; // Past patterns, preferences, and lessons learned
   } = {}
-): Promise<{ success: boolean; error?: string; cost?: number }> {
-  const prompt = generateBuildPrompt(description, projectType, options.preferredStack);
+): Promise<{ success: boolean; error?: string; cost?: number; prompt?: string }> {
+  const prompt = generateBuildPrompt(
+    description,
+    projectType,
+    options.preferredStack,
+    options.buildContext
+  );
 
-  return runClaudeCode(prompt, {
+  const result = await runClaudeCode(prompt, {
     cwd: workspacePath,
     onMessage: options.onMessage,
     maxBudgetUsd: options.maxBudgetUsd || 10.0,
   });
+
+  // Return the prompt along with the result so it can be saved
+  return { ...result, prompt };
 }
 
 /**

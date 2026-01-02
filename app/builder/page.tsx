@@ -3,7 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import PasscodeGate from '@/components/PasscodeGate';
-import type { BuildProject, BuildLogEntry, BuildProgressEvent, ProjectType, DeployTarget } from '@/types/build';
+import BuildProgressBar from '@/components/BuildProgressBar';
+import BuildPhaseFlow from '@/components/BuildPhaseFlow';
+import BuildPreview from '@/components/BuildPreview';
+import type { BuildProject, BuildLogEntry, BuildProgressEvent, ProjectType, DeployTarget, BuildStatus } from '@/types/build';
 
 export default function BuilderDashboard() {
   const [projects, setProjects] = useState<BuildProject[]>([]);
@@ -11,6 +14,15 @@ export default function BuilderDashboard() {
   const [logs, setLogs] = useState<BuildLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isBuilding, setIsBuilding] = useState(false);
+
+  // Progress tracking
+  const [currentProgress, setCurrentProgress] = useState<number | undefined>(undefined);
+  const [currentPhase, setCurrentPhase] = useState<BuildStatus>('queued');
+
+  // Action states
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [githubRepo, setGithubRepo] = useState('');
 
   // New project form state
   const [newProjectDescription, setNewProjectDescription] = useState('');
@@ -35,6 +47,10 @@ export default function BuilderDashboard() {
         // Skip connection messages
         if (data.type === 'connected') return;
         const progressEvent = data as BuildProgressEvent;
+
+        // Update progress state
+        setCurrentProgress(progressEvent.progress);
+        setCurrentPhase(progressEvent.phase);
 
         // Update logs
         setLogs(prev => [...prev, {
@@ -82,6 +98,10 @@ export default function BuilderDashboard() {
       const data = await response.json();
       if (data.success) {
         setLogs(data.logs);
+        // Set initial phase from project
+        if (data.project) {
+          setCurrentPhase(data.project.status);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch logs:', error);
@@ -91,6 +111,7 @@ export default function BuilderDashboard() {
   const handleSelectProject = (projectId: string) => {
     setSelectedProject(projectId);
     setLogs([]);
+    setCurrentProgress(undefined);
     fetchProjectLogs(projectId);
   };
 
@@ -99,6 +120,9 @@ export default function BuilderDashboard() {
     if (!newProjectDescription.trim()) return;
 
     setIsBuilding(true);
+    setCurrentProgress(0);
+    setCurrentPhase('planning');
+
     try {
       const response = await fetch('/api/build/start', {
         method: 'POST',
@@ -128,6 +152,80 @@ export default function BuilderDashboard() {
     }
   };
 
+  // Action handlers
+  const handleCancel = async () => {
+    if (!selectedProject) return;
+    setActionLoading('cancel');
+    try {
+      await fetch(`/api/build/${selectedProject}/cancel`, { method: 'POST' });
+      fetchProjects();
+    } catch (error) {
+      console.error('Failed to cancel:', error);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!selectedProject) return;
+    setActionLoading('retry');
+    try {
+      const response = await fetch(`/api/build/${selectedProject}/retry`, { method: 'POST' });
+      const data = await response.json();
+      if (data.success && data.newProjectId) {
+        setSelectedProject(data.newProjectId);
+        fetchProjects();
+      }
+    } catch (error) {
+      console.error('Failed to retry:', error);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeploy = async () => {
+    if (!selectedProject) return;
+    setActionLoading('deploy');
+    try {
+      const response = await fetch(`/api/build/${selectedProject}/deploy`, { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        alert(`Deployed! URL: ${data.url}`);
+        fetchProjects();
+      } else {
+        alert(`Deploy failed: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Failed to deploy:', error);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleGitHubPush = async () => {
+    if (!selectedProject || !githubRepo.trim()) return;
+    setActionLoading('github');
+    try {
+      const response = await fetch(`/api/build/${selectedProject}/github`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: githubRepo }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        alert(`Pushed to GitHub! ${data.repoUrl}`);
+        setGithubModalOpen(false);
+        setGithubRepo('');
+      } else {
+        alert(`Push failed: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Failed to push:', error);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'complete': return 'text-green-400';
@@ -154,6 +252,11 @@ export default function BuilderDashboard() {
   };
 
   const selectedProjectData = projects.find(p => p.id === selectedProject);
+  const isActivePhase = ['planning', 'building', 'testing', 'deploying'].includes(currentPhase);
+  const canCancel = selectedProjectData && isActivePhase;
+  const canRetry = selectedProjectData?.status === 'failed';
+  const canDeploy = selectedProjectData?.status === 'complete';
+  const canGitHub = selectedProjectData?.status === 'complete';
 
   if (loading) {
     return (
@@ -181,7 +284,7 @@ export default function BuilderDashboard() {
 
         <div className="flex h-[calc(100vh-73px)]">
           {/* Sidebar - Project List */}
-          <aside className="w-80 bg-gray-800 border-r border-gray-700 overflow-y-auto">
+          <aside className="w-72 bg-gray-800 border-r border-gray-700 overflow-y-auto flex-shrink-0">
             <div className="p-4">
               <h2 className="text-lg font-semibold mb-4">Projects</h2>
 
@@ -201,7 +304,7 @@ export default function BuilderDashboard() {
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-sm font-medium truncate flex-1">
-                          {project.description.slice(0, 40)}...
+                          {project.description.slice(0, 30)}...
                         </span>
                         <span className={`text-xs px-2 py-0.5 rounded border ${getStatusBadge(project.status)}`}>
                           {project.status}
@@ -210,15 +313,7 @@ export default function BuilderDashboard() {
                       <div className="flex items-center gap-2 text-xs text-gray-400">
                         <span className="bg-gray-600 px-1.5 py-0.5 rounded">{project.projectType}</span>
                         {project.localPort && (
-                          <a
-                            href={`http://localhost:${project.localPort}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-400 hover:underline"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            :${project.localPort}
-                          </a>
+                          <span className="text-blue-400">:{project.localPort}</span>
                         )}
                       </div>
                     </button>
@@ -229,127 +324,211 @@ export default function BuilderDashboard() {
           </aside>
 
           {/* Main Content */}
-          <main className="flex-1 flex flex-col">
+          <main className="flex-1 flex flex-col min-w-0">
             {/* New Project Form */}
-            <div className="p-6 bg-gray-800/50 border-b border-gray-700">
-              <h3 className="text-lg font-semibold mb-4">Start New Build</h3>
-              <form onSubmit={handleStartBuild} className="space-y-4">
+            <div className="p-4 bg-gray-800/50 border-b border-gray-700">
+              <h3 className="text-lg font-semibold mb-3">Start New Build</h3>
+              <form onSubmit={handleStartBuild} className="space-y-3">
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Project Description</label>
                   <textarea
                     value={newProjectDescription}
                     onChange={(e) => setNewProjectDescription(e.target.value)}
-                    placeholder="Describe what you want to build... (e.g., 'A todo app with React and local storage')"
+                    placeholder="Describe what you want to build..."
                     className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
-                    rows={3}
+                    rows={2}
                     disabled={isBuilding}
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-400 mb-1">Project Type</label>
-                    <select
-                      value={newProjectType}
-                      onChange={(e) => setNewProjectType(e.target.value as ProjectType)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500"
-                      disabled={isBuilding}
-                    >
-                      <option value="web-app">Web App</option>
-                      <option value="api">API</option>
-                      <option value="cli">CLI Tool</option>
-                      <option value="library">Library</option>
-                      <option value="full-stack">Full Stack</option>
-                    </select>
-                  </div>
+                <div className="flex gap-3">
+                  <select
+                    value={newProjectType}
+                    onChange={(e) => setNewProjectType(e.target.value as ProjectType)}
+                    className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                    disabled={isBuilding}
+                  >
+                    <option value="web-app">Web App</option>
+                    <option value="api">API</option>
+                    <option value="cli">CLI</option>
+                    <option value="library">Library</option>
+                    <option value="full-stack">Full Stack</option>
+                  </select>
 
-                  <div>
-                    <label className="block text-sm text-gray-400 mb-1">Tech Stack (optional)</label>
-                    <input
-                      type="text"
-                      value={newProjectStack}
-                      onChange={(e) => setNewProjectStack(e.target.value)}
-                      placeholder="e.g., React, TypeScript"
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
-                      disabled={isBuilding}
-                    />
-                  </div>
+                  <input
+                    type="text"
+                    value={newProjectStack}
+                    onChange={(e) => setNewProjectStack(e.target.value)}
+                    placeholder="Tech stack (optional)"
+                    className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                    disabled={isBuilding}
+                  />
 
-                  <div>
-                    <label className="block text-sm text-gray-400 mb-1">Deploy Target</label>
-                    <select
-                      value={newDeployTarget}
-                      onChange={(e) => setNewDeployTarget(e.target.value as DeployTarget)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500"
-                      disabled={isBuilding}
-                    >
-                      <option value="localhost">Localhost</option>
-                      <option value="vercel">Vercel</option>
-                    </select>
-                  </div>
+                  <select
+                    value={newDeployTarget}
+                    onChange={(e) => setNewDeployTarget(e.target.value as DeployTarget)}
+                    className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                    disabled={isBuilding}
+                  >
+                    <option value="localhost">Localhost</option>
+                    <option value="vercel">Vercel</option>
+                  </select>
+
+                  <button
+                    type="submit"
+                    disabled={isBuilding || !newProjectDescription.trim()}
+                    className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition font-medium text-sm"
+                  >
+                    {isBuilding ? 'Building...' : 'Build'}
+                  </button>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={isBuilding || !newProjectDescription.trim()}
-                  className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition font-medium"
-                >
-                  {isBuilding ? 'Building...' : 'Start Build'}
-                </button>
               </form>
             </div>
 
-            {/* Build Logs */}
-            <div className="flex-1 p-6 overflow-y-auto">
+            {/* Build Info & Logs */}
+            <div className="flex-1 p-4 overflow-y-auto">
               {selectedProject ? (
-                <>
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold">
-                      Build Logs
-                      {selectedProjectData && (
-                        <span className={`ml-2 ${getStatusColor(selectedProjectData.status)}`}>
-                          ({selectedProjectData.status})
-                        </span>
-                      )}
-                    </h3>
-                    {selectedProjectData?.localPort && (
-                      <a
-                        href={`http://localhost:${selectedProjectData.localPort}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition text-sm"
+                <div className="space-y-4">
+                  {/* Phase Flow */}
+                  <BuildPhaseFlow currentPhase={currentPhase} />
+
+                  {/* Progress Bar */}
+                  <BuildProgressBar
+                    progress={currentProgress}
+                    phase={currentPhase}
+                    isActive={isActivePhase}
+                  />
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-3">
+                    {canCancel && (
+                      <button
+                        onClick={handleCancel}
+                        disabled={actionLoading === 'cancel'}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 rounded-lg transition text-sm"
                       >
-                        Open Preview (:{selectedProjectData.localPort})
-                      </a>
+                        {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel Build'}
+                      </button>
+                    )}
+                    {canRetry && (
+                      <button
+                        onClick={handleRetry}
+                        disabled={actionLoading === 'retry'}
+                        className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 rounded-lg transition text-sm"
+                      >
+                        {actionLoading === 'retry' ? 'Retrying...' : 'Retry Build'}
+                      </button>
+                    )}
+                    {canDeploy && (
+                      <button
+                        onClick={handleDeploy}
+                        disabled={actionLoading === 'deploy'}
+                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 rounded-lg transition text-sm"
+                      >
+                        {actionLoading === 'deploy' ? 'Deploying...' : 'Deploy to Vercel'}
+                      </button>
+                    )}
+                    {canGitHub && (
+                      <button
+                        onClick={() => setGithubModalOpen(true)}
+                        className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg transition text-sm"
+                      >
+                        Push to GitHub
+                      </button>
                     )}
                   </div>
 
-                  <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 font-mono text-sm space-y-2 max-h-[500px] overflow-y-auto">
-                    {logs.length === 0 ? (
-                      <p className="text-gray-500">Waiting for logs...</p>
-                    ) : (
-                      logs.map((log, i) => (
-                        <div key={log.id || i} className="flex items-start gap-3">
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${getStatusBadge(log.phase)}`}>
-                            {log.phase}
-                          </span>
-                          <span className="text-gray-300 flex-1">{log.message}</span>
-                          <span className="text-gray-500 text-xs">
-                            {new Date(log.timestamp).toLocaleTimeString()}
-                          </span>
-                        </div>
-                      ))
-                    )}
+                  {/* Build Prompt (Collapsible) */}
+                  {selectedProjectData?.buildPrompt && (
+                    <details className="group">
+                      <summary className="cursor-pointer text-sm text-purple-400 hover:text-purple-300 transition flex items-center gap-2">
+                        <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        View Build Prompt Sent to Claude Code
+                      </summary>
+                      <div className="mt-2 bg-gray-800 rounded-lg border border-purple-500/30 p-4 font-mono text-xs text-gray-300 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
+                        {selectedProjectData.buildPrompt}
+                      </div>
+                    </details>
+                  )}
+
+                  {/* Logs */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2">
+                      Build Logs
+                      <span className={`ml-2 ${getStatusColor(currentPhase)}`}>
+                        ({currentPhase})
+                      </span>
+                    </h3>
+                    <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 font-mono text-sm space-y-2 max-h-[300px] overflow-y-auto">
+                      {logs.length === 0 ? (
+                        <p className="text-gray-500">Waiting for logs...</p>
+                      ) : (
+                        logs.map((log, i) => (
+                          <div key={log.id || i} className="flex items-start gap-3">
+                            <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${getStatusBadge(log.phase)}`}>
+                              {log.phase}
+                            </span>
+                            <span className="text-gray-300 flex-1 break-words">{log.message}</span>
+                            <span className="text-gray-500 text-xs flex-shrink-0">
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
-                </>
+                </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-500">
-                  <p>Select a project to view logs, or start a new build above.</p>
+                  <p>Select a project to view details, or start a new build above.</p>
                 </div>
               )}
             </div>
           </main>
+
+          {/* Preview Panel */}
+          {selectedProjectData?.localPort && (
+            <aside className="w-96 border-l border-gray-700 flex-shrink-0">
+              <BuildPreview
+                port={selectedProjectData.localPort}
+                projectId={selectedProject || ''}
+                isComplete={selectedProjectData.status === 'complete'}
+              />
+            </aside>
+          )}
         </div>
+
+        {/* GitHub Modal */}
+        {githubModalOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-lg p-6 w-96">
+              <h3 className="text-lg font-semibold mb-4">Push to GitHub</h3>
+              <input
+                type="text"
+                value={githubRepo}
+                onChange={(e) => setGithubRepo(e.target.value)}
+                placeholder="Repository name (e.g., my-project)"
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white mb-4 focus:outline-none focus:border-purple-500"
+              />
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setGithubModalOpen(false)}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleGitHubPush}
+                  disabled={actionLoading === 'github' || !githubRepo.trim()}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 rounded-lg transition"
+                >
+                  {actionLoading === 'github' ? 'Pushing...' : 'Push'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </PasscodeGate>
   );

@@ -111,8 +111,137 @@ export const BUILD_TOOLS: OpenAITool[] = [
           type: 'string',
           description: 'The ID of the project to deploy.',
         },
+        production: {
+          type: 'string',
+          description: 'Set to "true" to deploy to production. Default is preview deployment.',
+        },
       },
       required: ['projectId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'push_to_github',
+    description: 'Push a built project to GitHub. Use when the user wants to save their project to GitHub, or asks to commit/push the code.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project to push.',
+        },
+        owner: {
+          type: 'string',
+          description: 'The GitHub username or organization that owns the repo. Default is the authenticated user.',
+        },
+        repo: {
+          type: 'string',
+          description: 'The name of the GitHub repository to push to.',
+        },
+        commitMessage: {
+          type: 'string',
+          description: 'Optional commit message for the push.',
+        },
+      },
+      required: ['projectId', 'repo'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'cancel_build',
+    description: 'Cancel a running build. Use when the user wants to stop a build in progress.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project to cancel. If not provided, cancels the most recent running build.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'retry_build',
+    description: 'Retry a failed build. Use when a build failed and the user wants to try again, possibly with modifications.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the failed project to retry.',
+        },
+        modifications: {
+          type: 'string',
+          description: 'Optional modifications to make before retrying (e.g., "use simpler approach", "skip animations").',
+        },
+      },
+      required: ['projectId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'open_project',
+    description: 'Open a built project in the browser. Use when the user wants to see or preview a completed project.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project to open. If not provided, opens the most recent completed project.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'describe_project',
+    description: 'Get a detailed description of what was built in a project. Use when the user asks what a project contains or what features it has.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project to describe.',
+        },
+      },
+      required: ['projectId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'respond_to_build',
+    description: 'Send a response to a build that is waiting for clarification. Use this when Claude Code asks a question during the build process and the user provides an answer.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project that is waiting for a response.',
+        },
+        response: {
+          type: 'string',
+          description: 'The user\'s response to the clarification question.',
+        },
+      },
+      required: ['projectId', 'response'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_pending_question',
+    description: 'Check if there is a pending question from the build that needs the user\'s input. Use this when you need to check if the build is waiting for clarification.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: {
+          type: 'string',
+          description: 'The ID of the project to check for pending questions. If not provided, checks all active builds.',
+        },
+      },
+      required: [],
     },
   },
 ];

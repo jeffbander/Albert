@@ -378,10 +378,18 @@ export async function initDatabase() {
       local_port INTEGER,
       deploy_url TEXT,
       error TEXT,
+      build_prompt TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add build_prompt column if it doesn't exist (migration for existing databases)
+  try {
+    await db.execute(`ALTER TABLE build_projects ADD COLUMN build_prompt TEXT`);
+  } catch {
+    // Column already exists, ignore
+  }
 
   // Build logs for tracking progress
   await db.execute(`
@@ -1583,19 +1591,20 @@ export async function getReflectionQueueStats(): Promise<{
 // ============================================
 
 export async function createBuildProject(
+  id: string,
   description: string,
   projectType: ProjectType,
   workspacePath: string,
   options: {
     preferredStack?: string;
     deployTarget?: DeployTarget;
+    buildPrompt?: string;
   } = {}
 ): Promise<string> {
   const db = getDb();
-  const id = crypto.randomUUID();
   await db.execute({
-    sql: `INSERT INTO build_projects (id, description, project_type, workspace_path, preferred_stack, deploy_target)
-          VALUES (?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO build_projects (id, description, project_type, workspace_path, preferred_stack, deploy_target, build_prompt)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       description,
@@ -1603,6 +1612,7 @@ export async function createBuildProject(
       workspacePath,
       options.preferredStack || null,
       options.deployTarget || 'localhost',
+      options.buildPrompt || null,
     ],
   });
   return id;
@@ -1628,6 +1638,7 @@ export async function getBuildProject(id: string): Promise<BuildProject | null> 
     localPort: row.local_port as number | undefined,
     deployUrl: row.deploy_url as string | undefined,
     error: row.error as string | undefined,
+    buildPrompt: row.build_prompt as string | undefined,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -1649,6 +1660,7 @@ export async function getAllBuildProjects(): Promise<BuildProject[]> {
     localPort: row.local_port as number | undefined,
     deployUrl: row.deploy_url as string | undefined,
     error: row.error as string | undefined,
+    buildPrompt: row.build_prompt as string | undefined,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   }));
@@ -1661,6 +1673,7 @@ export async function updateBuildProjectStatus(
     error?: string;
     localPort?: number;
     deployUrl?: string;
+    buildPrompt?: string;
   } = {}
 ): Promise<void> {
   const db = getDb();
@@ -1678,6 +1691,10 @@ export async function updateBuildProjectStatus(
   if (options.deployUrl !== undefined) {
     updates.push('deploy_url = ?');
     args.push(options.deployUrl);
+  }
+  if (options.buildPrompt !== undefined) {
+    updates.push('build_prompt = ?');
+    args.push(options.buildPrompt);
   }
 
   args.push(id);
