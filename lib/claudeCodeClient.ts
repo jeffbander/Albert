@@ -78,6 +78,12 @@ ${typeGuidelines[projectType]}
 
 ${stackHint}
 ${contextSection}
+## CRITICAL: File Location
+**Create ALL project files directly in the CURRENT WORKING DIRECTORY.**
+- Do NOT create a subdirectory for the project (no "my-app/" or "project-name/" folder)
+- Put package.json, README.md, src/, etc. directly in the current directory
+- The current directory IS your project root
+
 ## Guidelines
 1. Create a complete, working project - not just scaffolding
 2. Include a README.md with setup and run instructions
@@ -89,8 +95,8 @@ ${contextSection}
 
 ## Process
 1. First, plan the project structure and key components
-2. Create the project files systematically
-3. Install dependencies if needed
+2. Create the project files directly in the current directory (NO subdirectories for project root)
+3. Install dependencies with npm install
 4. Test that the project runs correctly
 5. Fix any issues you find
 
@@ -268,14 +274,17 @@ export async function testProject(
 ): Promise<{ success: boolean; error?: string }> {
   const prompt = `You are testing an existing project to ensure it works correctly.
 
-## Tasks
-1. Check the project structure and dependencies
-2. Run any existing tests
-3. Start the project (if applicable) and verify it runs
-4. Report any issues found
-5. Fix critical issues if found
+IMPORTANT: The project is in YOUR CURRENT WORKING DIRECTORY. Do NOT navigate elsewhere.
+Start by running "ls" or "dir" to see the project files right here.
 
-Focus on making sure the project is functional.`;
+## Tasks
+1. List files in current directory to see the project structure
+2. Check package.json for dependencies and scripts
+3. Run "npm run build" or equivalent to verify it compiles
+4. Start the dev server if applicable (npm run dev)
+5. Report any issues found
+
+Do NOT search for projects elsewhere. The project files are HERE in your current directory.`;
 
   return runClaudeCode(prompt, {
     cwd: workspacePath,
