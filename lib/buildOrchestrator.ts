@@ -33,12 +33,24 @@ import {
   testProject as claudeTestProject,
   generateBuildPrompt,
   type ClaudeCodeMessage,
+  type BuildActivity,
 } from '@/lib/claudeCodeClient';
 import {
   saveBuildPattern,
   savePreferencesFromBuild,
   getBuildContext,
 } from '@/lib/buildMemory';
+import {
+  detectErrors,
+  generateFixPrompt,
+  getErrorSummary,
+  getErrorTracker,
+} from '@/lib/buildErrorHandler';
+
+// Extended progress event with activity support
+export interface ExtendedProgressEvent extends BuildProgressEvent {
+  activity?: BuildActivity;
+}
 
 // Global event emitter for build progress
 const buildEvents = new EventEmitter();
@@ -66,14 +78,32 @@ export function emitBuildProgress(
   projectId: string,
   phase: BuildStatus,
   message: string,
-  progress?: number
+  progress?: number,
+  activity?: BuildActivity
 ): void {
-  const event: BuildProgressEvent = {
+  const event: ExtendedProgressEvent = {
     projectId,
     phase,
     message,
     timestamp: new Date().toISOString(),
     progress,
+    activity,
+  };
+  buildEvents.emit(`progress:${projectId}`, event);
+}
+
+/**
+ * Emit an activity event
+ */
+export function emitBuildActivity(
+  projectId: string,
+  activity: BuildActivity
+): void {
+  const event = {
+    type: 'activity',
+    projectId,
+    activity,
+    timestamp: new Date().toISOString(),
   };
   buildEvents.emit(`progress:${projectId}`, event);
 }
@@ -156,6 +186,10 @@ async function executeBuild(
   await addBuildLog(projectId, 'building', 'Starting Claude Code build...');
   emitBuildProgress(projectId, 'building', 'Claude Code is building your project...', 20);
 
+  // Track errors for potential auto-fix
+  const errorTracker = getErrorTracker();
+  let buildOutput = '';
+
   const buildResult = await claudeBuildProject(
     options.description,
     options.projectType,
@@ -167,9 +201,22 @@ async function executeBuild(
         // Log significant messages
         if (msg.type === 'assistant' && msg.content) {
           const preview = msg.content.slice(0, 200);
+          buildOutput += msg.content + '\n';
           await addBuildLog(projectId, 'building', preview);
           emitBuildProgress(projectId, 'building', preview, 50);
+
+          // Check for errors in output
+          const errors = detectErrors(msg.content);
+          if (errors.length > 0) {
+            const summary = getErrorSummary(errors);
+            await addBuildLog(projectId, 'building', `Detected: ${summary}`);
+            errors.forEach(err => errorTracker.record(err, false));
+          }
         }
+      },
+      onActivity: (activity: BuildActivity) => {
+        // Emit activity to connected clients
+        emitBuildActivity(projectId, activity);
       },
     }
   );
