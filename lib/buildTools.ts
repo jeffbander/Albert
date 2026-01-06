@@ -22,6 +22,208 @@ export interface OpenAITool {
  * Tool definitions for build operations
  */
 export const BUILD_TOOLS: OpenAITool[] = [
+  // Browser control tools
+  {
+    type: 'function',
+    name: 'open_browser',
+    description: 'Open a website or URL in the browser using Playwright. Use this when the user asks you to open a website, go to a URL, navigate to a page, or visit a site. Examples: "open CNN", "go to google.com", "show me YouTube".',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'The URL to open. Can be a full URL (https://cnn.com) or just a domain (cnn.com). Common sites can be just the name (e.g., "google", "youtube", "twitter").',
+        },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'browser_screenshot',
+    description: 'Take a screenshot of the current browser page. Use this when the user asks to see what\'s on the page, wants you to read or describe the page, or asks "what do you see".',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'browser_click',
+    description: 'Click on an element on the current page. Use this when the user asks you to click a button, link, or any interactive element.',
+    parameters: {
+      type: 'object',
+      properties: {
+        selector: {
+          type: 'string',
+          description: 'CSS selector or text content to click. Examples: "button.submit", "text=Sign In", "a[href=\'/about\']".',
+        },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'browser_type',
+    description: 'Type text into an input field on the current page. Use this when the user asks you to type, enter text, fill in a form, or search for something.',
+    parameters: {
+      type: 'object',
+      properties: {
+        selector: {
+          type: 'string',
+          description: 'CSS selector for the input field. Examples: "input[name=\'search\']", "#email", "textarea".',
+        },
+        text: {
+          type: 'string',
+          description: 'The text to type into the field.',
+        },
+      },
+      required: ['selector', 'text'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'browser_scroll',
+    description: 'Scroll the current page up or down. Use this when the user asks to scroll, see more, or navigate up/down the page.',
+    parameters: {
+      type: 'object',
+      properties: {
+        direction: {
+          type: 'string',
+          enum: ['up', 'down'],
+          description: 'Direction to scroll.',
+        },
+        amount: {
+          type: 'string',
+          description: 'How much to scroll. Options: "page" for one page, "half" for half page, or a number of pixels.',
+        },
+      },
+      required: ['direction'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'close_browser',
+    description: 'Close the browser. Use this when the user asks to close the browser or is done browsing.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_page_content',
+    description: 'Get the text content of the current browser page. Use this when you need to read or understand what is on the current web page.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  // Self-improvement tools - Albert can read his own source code
+  {
+    type: 'function',
+    name: 'read_my_code',
+    description: 'Read Albert\'s own source code files. Use this when the user asks you to look at your own code, improve yourself, understand how you work, or suggest enhancements to your capabilities.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: {
+          type: 'string',
+          description: 'The file path to read relative to the project. Examples: "app/page.tsx" (main UI), "lib/buildTools.ts" (tools definitions), "components/AlbertChatWindow.tsx" (chat window), "lib/prompts.ts" (system prompts).',
+        },
+      },
+      required: ['filePath'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_my_files',
+    description: 'List Albert\'s source code files. Use this to see what files make up your codebase so you can read and understand them.',
+    parameters: {
+      type: 'object',
+      properties: {
+        directory: {
+          type: 'string',
+          description: 'Directory to list. Examples: "app" (pages and API routes), "lib" (utilities and logic), "components" (UI components), "hooks" (React hooks). Leave empty for project root.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'suggest_improvement',
+    description: 'Suggest an improvement to Albert\'s own code. Use this when the user asks you to improve yourself or you identify a way to enhance your capabilities.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: {
+          type: 'string',
+          description: 'The file to modify.',
+        },
+        description: {
+          type: 'string',
+          description: 'Description of the improvement to make.',
+        },
+        priority: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: 'Priority level of the improvement.',
+        },
+      },
+      required: ['filePath', 'description'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'improve_myself',
+    description: 'Use Claude Code to actually modify and improve Albert\'s own code. This is the self-improvement capability - use it when the user asks you to fix yourself, add a new feature to yourself, or improve your capabilities. Claude Code will make the actual code changes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: {
+          type: 'string',
+          description: 'A detailed description of what to fix, improve, or add. Be specific about what files to modify and what changes to make.',
+        },
+        reason: {
+          type: 'string',
+          description: 'Why this improvement is needed - what problem it solves or what capability it adds.',
+        },
+      },
+      required: ['task', 'reason'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'add_new_tool',
+    description: 'Add a completely new tool/capability to Albert. Use this when the user asks you to give yourself a new ability or add a new feature that requires a new tool definition.',
+    parameters: {
+      type: 'object',
+      properties: {
+        toolName: {
+          type: 'string',
+          description: 'The name of the new tool (snake_case, e.g., "send_email", "play_music").',
+        },
+        toolDescription: {
+          type: 'string',
+          description: 'What the tool does and when to use it.',
+        },
+        parameters: {
+          type: 'string',
+          description: 'JSON description of the parameters the tool needs.',
+        },
+        implementation: {
+          type: 'string',
+          description: 'Description of how the tool should work - what API to call, what logic to implement.',
+        },
+      },
+      required: ['toolName', 'toolDescription', 'implementation'],
+    },
+  },
+  // Build tools
   {
     type: 'function',
     name: 'start_build_project',

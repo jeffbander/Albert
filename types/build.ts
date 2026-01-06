@@ -30,6 +30,8 @@ export interface BuildProject {
   deployUrl?: string;
   error?: string;
   buildPrompt?: string; // The actual prompt sent to Claude Code
+  commitSha?: string; // Git commit SHA after auto-commit
+  githubUrl?: string; // GitHub repo URL if pushed
   createdAt: Date;
   updatedAt: Date;
 }

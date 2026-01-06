@@ -391,6 +391,20 @@ export async function initDatabase() {
     // Column already exists, ignore
   }
 
+  // Add commit_sha column (for auto-commit feature)
+  try {
+    await db.execute(`ALTER TABLE build_projects ADD COLUMN commit_sha TEXT`);
+  } catch {
+    // Column already exists, ignore
+  }
+
+  // Add github_url column (for GitHub push feature)
+  try {
+    await db.execute(`ALTER TABLE build_projects ADD COLUMN github_url TEXT`);
+  } catch {
+    // Column already exists, ignore
+  }
+
   // Build logs for tracking progress
   await db.execute(`
     CREATE TABLE IF NOT EXISTS build_logs (
@@ -1674,6 +1688,8 @@ export async function updateBuildProjectStatus(
     localPort?: number;
     deployUrl?: string;
     buildPrompt?: string;
+    commitSha?: string;
+    githubUrl?: string;
   } = {}
 ): Promise<void> {
   const db = getDb();
@@ -1695,6 +1711,14 @@ export async function updateBuildProjectStatus(
   if (options.buildPrompt !== undefined) {
     updates.push('build_prompt = ?');
     args.push(options.buildPrompt);
+  }
+  if (options.commitSha !== undefined) {
+    updates.push('commit_sha = ?');
+    args.push(options.commitSha);
+  }
+  if (options.githubUrl !== undefined) {
+    updates.push('github_url = ?');
+    args.push(options.githubUrl);
   }
 
   args.push(id);

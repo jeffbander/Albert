@@ -40,6 +40,7 @@ import {
   savePreferencesFromBuild,
   getBuildContext,
 } from '@/lib/buildMemory';
+import { autoCommitProject } from '@/lib/gitUtils';
 import {
   detectErrors,
   generateFixPrompt,
@@ -276,6 +277,20 @@ async function executeBuild(
     await saveBuildPattern(project, true, buildDuration);
     await savePreferencesFromBuild(project);
   }
+
+  // Auto-commit the project to git
+  await addBuildLog(projectId, 'complete', 'Auto-committing project to Git...');
+  emitBuildProgress(projectId, 'complete', 'Committing to Git...', 98);
+
+  const commitResult = await autoCommitProject(workspacePath, options.description);
+  if (commitResult.success && commitResult.sha) {
+    await addBuildLog(projectId, 'complete', `Committed: ${commitResult.sha}`);
+    await updateBuildProjectStatus(projectId, 'complete', { commitSha: commitResult.sha });
+  } else if (commitResult.error) {
+    await addBuildLog(projectId, 'complete', `Git: ${commitResult.error}`);
+  }
+
+  emitBuildProgress(projectId, 'complete', 'Build complete!', 100);
 }
 
 /**

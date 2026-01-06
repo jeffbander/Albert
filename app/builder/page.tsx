@@ -9,6 +9,8 @@ import BuildPreview from '@/components/BuildPreview';
 import BuildActivityFeed from '@/components/BuildActivityFeed';
 import BuildFileTree, { type FileNode } from '@/components/BuildFileTree';
 import FileContentViewer from '@/components/FileContentViewer';
+import SelfImprovementPanel from '@/components/SelfImprovementPanel';
+import LogsViewer from '@/components/LogsViewer';
 import type { BuildActivity } from '@/lib/buildActivityParser';
 import type { BuildProject, BuildLogEntry, BuildProgressEvent, ProjectType, DeployTarget, BuildStatus } from '@/types/build';
 
@@ -40,6 +42,8 @@ export default function BuilderDashboard() {
   // Panel visibility
   const [showActivityFeed, setShowActivityFeed] = useState(true);
   const [showFileExplorer, setShowFileExplorer] = useState(true);
+  const [showSelfImprovement, setShowSelfImprovement] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
 
   // New project form state
   const [newProjectDescription, setNewProjectDescription] = useState('');
@@ -350,9 +354,31 @@ export default function BuilderDashboard() {
               <h1 className="text-2xl font-bold text-purple-400">Albert Builder</h1>
               <p className="text-gray-400 text-sm">Autonomous project building powered by Claude Code</p>
             </div>
-            <Link href="/" className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition">
-              Back to Chat
-            </Link>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSelfImprovement(!showSelfImprovement)}
+                className={`px-4 py-2 rounded-lg transition flex items-center gap-2 ${
+                  showSelfImprovement
+                    ? 'bg-yellow-600 hover:bg-yellow-700'
+                    : 'bg-gray-600 hover:bg-gray-500'
+                }`}
+              >
+                🔧 Self-Improvement
+              </button>
+              <button
+                onClick={() => setShowLogs(!showLogs)}
+                className={`px-4 py-2 rounded-lg transition flex items-center gap-2 ${
+                  showLogs
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-gray-600 hover:bg-gray-500'
+                }`}
+              >
+                📊 Logs
+              </button>
+              <Link href="/" className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition">
+                Back to Chat
+              </Link>
+            </div>
           </div>
         </header>
 
@@ -460,6 +486,20 @@ export default function BuilderDashboard() {
                 </div>
               </form>
             </div>
+
+            {/* Self-Improvement Panel (Collapsible) */}
+            {showSelfImprovement && (
+              <div className="border-b border-gray-700">
+                <SelfImprovementPanel className="max-h-[450px]" />
+              </div>
+            )}
+
+            {/* Logs Viewer Panel (Collapsible) */}
+            {showLogs && (
+              <div className="border-b border-gray-700">
+                <LogsViewer maxHeight="400px" />
+              </div>
+            )}
 
             {/* Build Info & Logs */}
             <div className="flex-1 p-4 overflow-y-auto">

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import EchoOrb, { EchoState } from '@/components/EchoOrb';
 import StatusIndicator from '@/components/StatusIndicator';
 import PasscodeGate from '@/components/PasscodeGate';
+import AlbertChatWindow from '@/components/AlbertChatWindow';
 import { useEagle } from '@/hooks/useEagle';
 import { BUILD_TOOLS } from '@/lib/buildTools';
 import {
@@ -42,6 +43,8 @@ export default function Home() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [lastMessageId, setLastMessageId] = useState<string | null>(null);
   const [feedbackGiven, setFeedbackGiven] = useState<'up' | 'down' | null>(null);
+  const [chatMessages, setChatMessages] = useState<ConversationMessage[]>([]);
+  const [chatMinimized, setChatMinimized] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -130,6 +133,7 @@ export default function Home() {
     setIdentifiedSpeaker(null);
     setIsConnected(false);
     setState('idle');
+    // Don't clear chat messages - keep them visible after disconnect
   }, []);
 
   // Identify speaker from audio stream
@@ -797,6 +801,223 @@ export default function Home() {
           break;
         }
 
+        // Browser control tools
+        case 'open_browser': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'open', url: parsedArgs.url }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `I've opened ${data.url}. The page title is "${data.title}".`,
+              url: data.url,
+              title: data.title,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to open browser' });
+          }
+          break;
+        }
+
+        case 'browser_screenshot': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'screenshot' }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `I can see the page "${data.title}" at ${data.url}. Let me describe what I see on the page.`,
+              title: data.title,
+              url: data.url,
+              hasScreenshot: true,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to take screenshot' });
+          }
+          break;
+        }
+
+        case 'browser_click': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'click', selector: parsedArgs.selector }),
+          });
+          const data = await response.json();
+          result = JSON.stringify(data);
+          break;
+        }
+
+        case 'browser_type': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'type', selector: parsedArgs.selector, text: parsedArgs.text }),
+          });
+          const data = await response.json();
+          result = JSON.stringify(data);
+          break;
+        }
+
+        case 'browser_scroll': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'scroll', direction: parsedArgs.direction, amount: parsedArgs.amount }),
+          });
+          const data = await response.json();
+          result = JSON.stringify(data);
+          break;
+        }
+
+        case 'close_browser': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'close' }),
+          });
+          const data = await response.json();
+          result = JSON.stringify(data);
+          break;
+        }
+
+        case 'get_page_content': {
+          const response = await fetch('/api/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get_text' }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              title: data.title,
+              url: data.url,
+              content: data.text?.slice(0, 2000), // Limit for voice response
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
+        // Self-improvement tools
+        case 'read_my_code': {
+          const response = await fetch('/api/codebase', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'read', filePath: parsedArgs.filePath }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            // Summarize for voice - full content would be too long
+            const preview = data.content.slice(0, 1500);
+            result = JSON.stringify({
+              success: true,
+              filePath: data.filePath,
+              lines: data.lines,
+              preview: preview + (data.content.length > 1500 ? '\n... (truncated for voice)' : ''),
+              message: `I've read ${data.filePath}. It has ${data.lines} lines of code.`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
+        case 'list_my_files': {
+          const response = await fetch('/api/codebase', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'list', directory: parsedArgs.directory }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            const fileList = data.files.map((f: { name: string; type: string }) =>
+              `${f.type === 'directory' ? '📁' : '📄'} ${f.name}`
+            ).join(', ');
+            result = JSON.stringify({
+              success: true,
+              directory: data.directory,
+              files: data.files,
+              message: `In ${data.directory}, I found: ${fileList}`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
+        case 'suggest_improvement': {
+          const response = await fetch('/api/codebase', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'suggest',
+              filePath: parsedArgs.filePath,
+              description: parsedArgs.description,
+              priority: parsedArgs.priority,
+            }),
+          });
+          const data = await response.json();
+          result = JSON.stringify(data);
+          break;
+        }
+
+        case 'improve_myself': {
+          const response = await fetch('/api/self-improve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'improve',
+              task: parsedArgs.task,
+              reason: parsedArgs.reason,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `I'm now improving myself! ${data.message}. I'll let you know when I'm done. The changes will apply automatically.`,
+              logId: data.logId,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
+        case 'add_new_tool': {
+          const response = await fetch('/api/self-improve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add_tool',
+              toolName: parsedArgs.toolName,
+              toolDescription: parsedArgs.toolDescription,
+              parameters: parsedArgs.parameters,
+              implementation: parsedArgs.implementation,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `I'm adding a new capability to myself: "${parsedArgs.toolName}". Claude Code is implementing it now. Once complete, I'll have this new ability!`,
+              logId: data.logId,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
         default:
           result = JSON.stringify({ error: `Unknown function: ${name}` });
       }
@@ -856,11 +1077,13 @@ export default function Home() {
 
       case 'conversation.item.input_audio_transcription.completed':
         if (event.transcript) {
-          messagesRef.current.push({
+          const userMessage = {
             id: crypto.randomUUID(),
-            role: 'user',
+            role: 'user' as const,
             content: event.transcript as string,
-          });
+          };
+          messagesRef.current.push(userMessage);
+          setChatMessages(prev => [...prev, userMessage]);
 
           // Search for relevant memories based on what user said
           fetch('/api/memory/search', {
@@ -874,11 +1097,13 @@ export default function Home() {
       case 'response.audio_transcript.done':
         if (event.transcript) {
           const messageId = crypto.randomUUID();
-          messagesRef.current.push({
+          const assistantMessage = {
             id: messageId,
-            role: 'assistant',
+            role: 'assistant' as const,
             content: event.transcript as string,
-          });
+          };
+          messagesRef.current.push(assistantMessage);
+          setChatMessages(prev => [...prev, assistantMessage]);
 
           // Show feedback UI after Albert finishes speaking
           setLastMessageId(messageId);
@@ -1080,6 +1305,14 @@ export default function Home() {
             Created by <span className="text-purple-400">Bander Labs</span>
           </p>
         </div>
+
+        {/* Albert Chat Window */}
+        <AlbertChatWindow
+          messages={chatMessages}
+          isConnected={isConnected}
+          isMinimized={chatMinimized}
+          onToggleMinimize={() => setChatMinimized(prev => !prev)}
+        />
       </main>
     </PasscodeGate>
   );
