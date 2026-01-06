@@ -416,6 +416,53 @@ export async function initDatabase() {
       FOREIGN KEY (project_id) REFERENCES build_projects(id) ON DELETE CASCADE
     )
   `);
+
+  // Active improvements for self-improvement sessions (persisted across restarts)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS active_improvements (
+      id TEXT PRIMARY KEY,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed')),
+      activities TEXT DEFAULT '[]',
+      messages TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Clean up stale "running" improvements on startup (mark as failed if > 1 hour old)
+  await db.execute(`
+    UPDATE active_improvements
+    SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'running'
+    AND datetime(updated_at) < datetime('now', '-1 hour')
+  `);
+
+  // Contacts for email lookup (e.g., "email Mom" -> mom@email.com)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      nickname TEXT,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Pending emails for send confirmation flow
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS pending_emails (
+      id TEXT PRIMARY KEY,
+      to_address TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      cc TEXT,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'cancelled')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME DEFAULT (datetime('now', '+10 minutes'))
+    )
+  `);
 }
 
 export async function getLastConversation() {
@@ -1765,6 +1812,345 @@ export async function deleteBuildProject(id: string): Promise<void> {
     sql: 'DELETE FROM build_projects WHERE id = ?',
     args: [id],
   });
+}
+
+// ============================================
+// Active Improvement Functions (Self-Improvement)
+// ============================================
+
+export interface ActiveImprovementRecord {
+  id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  activities: string; // JSON stringified
+  messages: string; // JSON stringified
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export async function createActiveImprovement(
+  id: string,
+  status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
+): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `INSERT INTO active_improvements (id, status, activities, messages)
+          VALUES (?, ?, '[]', '[]')`,
+    args: [id, status],
+  });
+}
+
+export async function getActiveImprovementFromDb(id: string): Promise<ActiveImprovementRecord | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM active_improvements WHERE id = ?',
+    args: [id],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    status: row.status as ActiveImprovementRecord['status'],
+    activities: row.activities as string,
+    messages: row.messages as string,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function updateActiveImprovement(
+  id: string,
+  updates: {
+    status?: 'pending' | 'running' | 'completed' | 'failed';
+    activities?: unknown[];
+    messages?: string[];
+  }
+): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const args: (string | number)[] = [];
+
+  if (updates.status !== undefined) {
+    setClauses.push('status = ?');
+    args.push(updates.status);
+  }
+  if (updates.activities !== undefined) {
+    setClauses.push('activities = ?');
+    args.push(JSON.stringify(updates.activities));
+  }
+  if (updates.messages !== undefined) {
+    // Keep only last 1000 messages to prevent unbounded growth
+    const bounded = updates.messages.slice(-1000);
+    setClauses.push('messages = ?');
+    args.push(JSON.stringify(bounded));
+  }
+
+  args.push(id);
+  await db.execute({
+    sql: `UPDATE active_improvements SET ${setClauses.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+export async function deleteActiveImprovement(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM active_improvements WHERE id = ?',
+    args: [id],
+  });
+}
+
+export async function getRunningImprovements(): Promise<ActiveImprovementRecord[]> {
+  const db = getDb();
+  const result = await db.execute(
+    "SELECT * FROM active_improvements WHERE status = 'running' ORDER BY created_at DESC"
+  );
+  return result.rows.map(row => ({
+    id: row.id as string,
+    status: row.status as ActiveImprovementRecord['status'],
+    activities: row.activities as string,
+    messages: row.messages as string,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  }));
+}
+
+export async function getAllActiveImprovementIdsFromDb(): Promise<string[]> {
+  const db = getDb();
+  const result = await db.execute(
+    "SELECT id FROM active_improvements WHERE status IN ('pending', 'running') ORDER BY created_at DESC"
+  );
+  return result.rows.map(row => row.id as string);
+}
+
+export async function cleanupOldImprovements(maxAgeDays: number = 7): Promise<number> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `DELETE FROM active_improvements
+          WHERE status IN ('completed', 'failed')
+          AND datetime(updated_at) < datetime('now', '-' || ? || ' days')`,
+    args: [maxAgeDays],
+  });
+  return result.rowsAffected;
+}
+
+// ============================================
+// Contact Functions (Email Lookup)
+// ============================================
+
+export interface Contact {
+  id: string;
+  name: string;
+  email: string;
+  nickname: string | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export async function addContact(
+  name: string,
+  email: string,
+  options: { nickname?: string; notes?: string } = {}
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO contacts (id, name, email, nickname, notes)
+          VALUES (?, ?, ?, ?, ?)`,
+    args: [id, name, email, options.nickname || null, options.notes || null],
+  });
+  return id;
+}
+
+export async function getContactByName(name: string): Promise<Contact | null> {
+  const db = getDb();
+  // Search by name or nickname (case-insensitive)
+  const result = await db.execute({
+    sql: `SELECT * FROM contacts
+          WHERE LOWER(name) = LOWER(?) OR LOWER(nickname) = LOWER(?)
+          LIMIT 1`,
+    args: [name, name],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    email: row.email as string,
+    nickname: row.nickname as string | null,
+    notes: row.notes as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function getContactByEmail(email: string): Promise<Contact | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM contacts WHERE LOWER(email) = LOWER(?) LIMIT 1',
+    args: [email],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    email: row.email as string,
+    nickname: row.nickname as string | null,
+    notes: row.notes as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function getAllContacts(): Promise<Contact[]> {
+  const db = getDb();
+  const result = await db.execute('SELECT * FROM contacts ORDER BY name ASC');
+  return result.rows.map(row => ({
+    id: row.id as string,
+    name: row.name as string,
+    email: row.email as string,
+    nickname: row.nickname as string | null,
+    notes: row.notes as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  }));
+}
+
+export async function searchContacts(query: string): Promise<Contact[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM contacts
+          WHERE name LIKE ? OR nickname LIKE ? OR email LIKE ?
+          ORDER BY name ASC LIMIT 10`,
+    args: [`%${query}%`, `%${query}%`, `%${query}%`],
+  });
+  return result.rows.map(row => ({
+    id: row.id as string,
+    name: row.name as string,
+    email: row.email as string,
+    nickname: row.nickname as string | null,
+    notes: row.notes as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  }));
+}
+
+export async function updateContact(
+  id: string,
+  updates: Partial<Pick<Contact, 'name' | 'email' | 'nickname' | 'notes'>>
+): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const args: (string | null)[] = [];
+
+  if (updates.name !== undefined) {
+    setClauses.push('name = ?');
+    args.push(updates.name);
+  }
+  if (updates.email !== undefined) {
+    setClauses.push('email = ?');
+    args.push(updates.email);
+  }
+  if (updates.nickname !== undefined) {
+    setClauses.push('nickname = ?');
+    args.push(updates.nickname);
+  }
+  if (updates.notes !== undefined) {
+    setClauses.push('notes = ?');
+    args.push(updates.notes);
+  }
+
+  args.push(id);
+  await db.execute({
+    sql: `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+export async function deleteContact(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM contacts WHERE id = ?',
+    args: [id],
+  });
+}
+
+// ============================================
+// Pending Email Functions (Send Confirmation)
+// ============================================
+
+export interface PendingEmail {
+  id: string;
+  toAddress: string;
+  subject: string;
+  body: string;
+  cc: string | null;
+  status: 'pending' | 'sent' | 'cancelled';
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+export async function createPendingEmail(
+  toAddress: string,
+  subject: string,
+  body: string,
+  cc?: string
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO pending_emails (id, to_address, subject, body, cc)
+          VALUES (?, ?, ?, ?, ?)`,
+    args: [id, toAddress, subject, body, cc || null],
+  });
+  return id;
+}
+
+export async function getPendingEmail(id: string): Promise<PendingEmail | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM pending_emails
+          WHERE id = ? AND status = 'pending' AND datetime(expires_at) > datetime('now')`,
+    args: [id],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    toAddress: row.to_address as string,
+    subject: row.subject as string,
+    body: row.body as string,
+    cc: row.cc as string | null,
+    status: row.status as PendingEmail['status'],
+    createdAt: new Date(row.created_at as string),
+    expiresAt: new Date(row.expires_at as string),
+  };
+}
+
+export async function markPendingEmailSent(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE pending_emails SET status = 'sent' WHERE id = ?`,
+    args: [id],
+  });
+}
+
+export async function cancelPendingEmail(id: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE pending_emails SET status = 'cancelled' WHERE id = ?`,
+    args: [id],
+  });
+}
+
+export async function cleanupExpiredEmails(): Promise<number> {
+  const db = getDb();
+  const result = await db.execute(`
+    DELETE FROM pending_emails
+    WHERE status = 'pending' AND datetime(expires_at) < datetime('now')
+  `);
+  return result.rowsAffected;
 }
 
 export default getDb;

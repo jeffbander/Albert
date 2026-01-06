@@ -504,6 +504,187 @@ export const BUILD_TOOLS: OpenAITool[] = [
       required: ['projectId', 'guidance', 'action'],
     },
   },
+  // ============================================
+  // Gmail Email Tools
+  // ============================================
+  {
+    type: 'function',
+    name: 'compose_email',
+    description: 'Compose an email to send. This creates a pending email that requires confirmation before sending. Use when the user asks to send, email, or message someone. Examples: "email John about the meeting", "send a message to Mom".',
+    parameters: {
+      type: 'object',
+      properties: {
+        to: {
+          type: 'string',
+          description: 'Recipient - can be an email address or a contact name (e.g., "Mom", "john@example.com").',
+        },
+        subject: {
+          type: 'string',
+          description: 'Subject line of the email.',
+        },
+        body: {
+          type: 'string',
+          description: 'Body content of the email.',
+        },
+        cc: {
+          type: 'string',
+          description: 'Optional CC recipients (comma-separated emails or contact names).',
+        },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'confirm_send_email',
+    description: 'Confirm and send a previously composed email after the user approves. Only use after compose_email and user confirmation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pendingId: {
+          type: 'string',
+          description: 'The pending email ID from compose_email to send.',
+        },
+      },
+      required: ['pendingId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'read_emails',
+    description: 'Read recent emails or search inbox. Use when the user asks to check, read, or see their emails. Examples: "check my email", "any new messages?", "emails from John".',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Gmail search query. Examples: "from:john", "is:unread", "subject:meeting". Leave empty for recent inbox emails.',
+        },
+        maxResults: {
+          type: 'string',
+          description: 'Maximum number of emails to return (default: 5).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'read_email_content',
+    description: 'Read the full content of a specific email by ID. Use when the user wants more details about a specific email.',
+    parameters: {
+      type: 'object',
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The ID of the email message to read.',
+        },
+      },
+      required: ['messageId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'search_emails',
+    description: 'Search for emails using Gmail query syntax. Use when the user wants to find specific emails. Examples: "find emails about the project", "search for invoices from last month".',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query using Gmail syntax. Examples: "from:boss subject:urgent", "has:attachment newer_than:7d".',
+        },
+        maxResults: {
+          type: 'string',
+          description: 'Maximum results to return (default: 10).',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'draft_email',
+    description: 'Create a draft email without sending. Use when the user explicitly wants to save a draft for later.',
+    parameters: {
+      type: 'object',
+      properties: {
+        to: {
+          type: 'string',
+          description: 'Recipient email address or contact name.',
+        },
+        subject: {
+          type: 'string',
+          description: 'Subject line of the email.',
+        },
+        body: {
+          type: 'string',
+          description: 'Body content of the email.',
+        },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'reply_to_email',
+    description: 'Reply to an existing email. Use when the user wants to respond to a specific email.',
+    parameters: {
+      type: 'object',
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The ID of the email to reply to.',
+        },
+        body: {
+          type: 'string',
+          description: 'The reply message content.',
+        },
+      },
+      required: ['messageId', 'body'],
+    },
+  },
+  // ============================================
+  // Contact Management Tools
+  // ============================================
+  {
+    type: 'function',
+    name: 'add_contact',
+    description: 'Add a new contact for email lookup. Use when the user says to remember someone\'s email. Examples: "remember that Mom\'s email is mom@email.com", "add John to my contacts".',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The contact\'s name (e.g., "Mom", "John Smith").',
+        },
+        email: {
+          type: 'string',
+          description: 'The contact\'s email address.',
+        },
+        nickname: {
+          type: 'string',
+          description: 'Optional nickname for the contact.',
+        },
+      },
+      required: ['name', 'email'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'lookup_contact',
+    description: 'Look up a contact\'s email by name. Use internally before sending emails to resolve names to addresses.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Name or nickname to look up.',
+        },
+      },
+      required: ['name'],
+    },
+  },
 ];
 
 /**

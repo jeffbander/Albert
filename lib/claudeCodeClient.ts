@@ -51,11 +51,16 @@ const DEFAULT_BUILD_TOOLS = [
 /**
  * MCP Servers configuration for extended capabilities
  * Playwright gives Albert browser automation abilities
+ * Gmail gives Albert email capabilities (send, read, search, draft)
  */
 const MCP_SERVERS = {
   playwright: {
     command: 'npx',
     args: ['@anthropic-ai/mcp-server-playwright'],
+  },
+  gmail: {
+    command: 'npx',
+    args: ['@gongrzhe/server-gmail-autoauth-mcp'],
   },
 };
 

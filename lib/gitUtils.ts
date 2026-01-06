@@ -1,8 +1,15 @@
 /**
  * Git utilities for auto-committing and pushing project changes
+ * Windows-compatible: Uses exec() instead of bash
  */
 
-import { spawn } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+
+const execAsync = promisify(exec);
 
 export interface CommitResult {
   success: boolean;
@@ -15,34 +22,20 @@ export interface CommitResult {
  * Initialize a git repository in the workspace
  */
 export async function initGitRepo(workspacePath: string): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const gitProcess = spawn('git', ['init'], {
-      cwd: workspacePath,
-      shell: true,
-    });
-
-    let errorOutput = '';
-
-    gitProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    gitProcess.on('close', (code) => {
-      if (code === 0) {
-        resolve({ success: true });
-      } else {
-        resolve({ success: false, error: errorOutput });
-      }
-    });
-
-    gitProcess.on('error', (err) => {
-      resolve({ success: false, error: err.message });
-    });
-  });
+  try {
+    await execAsync('git init', { cwd: workspacePath });
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Git init failed'
+    };
+  }
 }
 
 /**
  * Auto-commit changes in a project workspace
+ * Windows-compatible: Uses temp file for commit message
  */
 export async function autoCommitProject(
   workspacePath: string,
@@ -53,15 +46,15 @@ export async function autoCommitProject(
     branch?: string;
   } = {}
 ): Promise<CommitResult> {
-  const { push = false, remote = 'origin', branch = 'main' } = options;
+  // Default to push = true per user request
+  const { push = true, remote = 'origin', branch = 'main' } = options;
 
   // First, ensure git is initialized
   await initGitRepo(workspacePath);
 
-  return new Promise((resolve) => {
-    const shortDescription = projectDescription.slice(0, 50) + (projectDescription.length > 50 ? '...' : '');
+  const shortDescription = projectDescription.slice(0, 50) + (projectDescription.length > 50 ? '...' : '');
 
-    const commitMessage = `🚀 Build: ${shortDescription}
+  const commitMessage = `🚀 Build: ${shortDescription}
 
 Built autonomously by Albert using Claude Code.
 
@@ -69,63 +62,152 @@ Built autonomously by Albert using Claude Code.
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>`;
 
-    // Build command chain: add all, commit
-    let commands = `git add -A && git commit -m "${commitMessage.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
+  // Write commit message to temp file (avoids shell escaping issues on all platforms)
+  const msgFile = path.join(os.tmpdir(), `albert-commit-msg-${Date.now()}.txt`);
 
-    // Add push if requested
-    if (push) {
-      commands += ` && git push ${remote} ${branch}`;
+  try {
+    await fs.writeFile(msgFile, commitMessage, 'utf-8');
+
+    // Stage all changes
+    await execAsync('git add -A', { cwd: workspacePath });
+
+    // Check if there are changes to commit
+    const { stdout: statusOutput } = await execAsync('git status --porcelain', { cwd: workspacePath });
+
+    if (!statusOutput.trim()) {
+      return {
+        success: true,
+        error: 'Nothing to commit - no changes detected',
+      };
     }
 
-    const gitProcess = spawn('bash', ['-c', commands], {
-      cwd: workspacePath,
-      shell: true,
-    });
+    // Commit using file for message (works on Windows and Unix)
+    const { stdout } = await execAsync(`git commit -F "${msgFile}"`, { cwd: workspacePath });
 
-    let output = '';
-    let errorOutput = '';
+    // Extract commit SHA from output
+    const shaMatch = stdout.match(/\[[\w-]+\s+([a-f0-9]+)\]/);
+    const sha = shaMatch ? shaMatch[1] : undefined;
 
-    gitProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    gitProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    gitProcess.on('close', (code) => {
-      if (code === 0) {
-        // Extract commit SHA from output
-        const shaMatch = output.match(/\[[\w-]+\s+([a-f0-9]+)\]/);
-        resolve({
-          success: true,
-          sha: shaMatch ? shaMatch[1] : undefined,
-          pushed: push,
-        });
-      } else {
-        // Check if it's just "nothing to commit"
-        if (errorOutput.includes('nothing to commit') || output.includes('nothing to commit')) {
-          resolve({
-            success: true,
-            error: 'Nothing to commit - no changes detected',
-          });
-        } else {
-          resolve({
-            success: false,
-            error: errorOutput || 'Git commit failed',
-          });
-        }
+    // Auto-push if enabled (DEFAULT: true)
+    let pushed = false;
+    if (push) {
+      try {
+        await execAsync(`git push ${remote} ${branch}`, { cwd: workspacePath });
+        pushed = true;
+      } catch (pushError) {
+        // Push failed but commit succeeded - still a partial success
+        console.error('[GitUtils] Push failed:', pushError);
       }
-    });
+    }
 
-    gitProcess.on('error', (err) => {
-      resolve({ success: false, error: err.message });
-    });
-  });
+    return {
+      success: true,
+      sha,
+      pushed,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Git commit failed';
+
+    // Check if it's just "nothing to commit"
+    if (errorMessage.includes('nothing to commit')) {
+      return {
+        success: true,
+        error: 'Nothing to commit - no changes detected',
+      };
+    }
+
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  } finally {
+    // Cleanup temp file
+    await fs.unlink(msgFile).catch(() => {});
+  }
+}
+
+/**
+ * Auto-commit self-improvement changes
+ * Windows-compatible: Uses temp file for commit message
+ */
+export async function autoCommitSelfImprovement(
+  task: string,
+  push: boolean = true
+): Promise<CommitResult> {
+  const cwd = process.cwd();
+
+  const commitMessage = `🤖 Self-improvement: ${task.slice(0, 50)}${task.length > 50 ? '...' : ''}
+
+Generated by Albert's self-improvement system using Claude Code.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>`;
+
+  // Write commit message to temp file
+  const msgFile = path.join(os.tmpdir(), `albert-self-improve-${Date.now()}.txt`);
+
+  try {
+    await fs.writeFile(msgFile, commitMessage, 'utf-8');
+
+    // Stage all changes
+    await execAsync('git add -A', { cwd });
+
+    // Check if there are changes to commit
+    const { stdout: statusOutput } = await execAsync('git status --porcelain', { cwd });
+
+    if (!statusOutput.trim()) {
+      return {
+        success: true,
+        error: 'Nothing to commit - no changes detected',
+      };
+    }
+
+    // Commit using file for message
+    const { stdout } = await execAsync(`git commit -F "${msgFile}"`, { cwd });
+
+    // Extract commit SHA
+    const shaMatch = stdout.match(/\[[\w-]+\s+([a-f0-9]+)\]/);
+    const sha = shaMatch ? shaMatch[1] : undefined;
+
+    // Auto-push if enabled (DEFAULT: true)
+    let pushed = false;
+    if (push) {
+      try {
+        await execAsync('git push', { cwd });
+        pushed = true;
+      } catch (pushError) {
+        console.error('[GitUtils] Self-improvement push failed:', pushError);
+      }
+    }
+
+    return {
+      success: true,
+      sha,
+      pushed,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Git commit failed';
+
+    if (errorMessage.includes('nothing to commit')) {
+      return {
+        success: true,
+        error: 'Nothing to commit - no changes detected',
+      };
+    }
+
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  } finally {
+    await fs.unlink(msgFile).catch(() => {});
+  }
 }
 
 /**
  * Push changes to a remote GitHub repository
+ * Windows-compatible: Uses exec() instead of bash
  */
 export async function pushToGitHub(
   workspacePath: string,
@@ -138,104 +220,62 @@ export async function pushToGitHub(
 ): Promise<{ success: boolean; repoUrl?: string; error?: string }> {
   const { owner, branch = 'main', createRepo = true } = options;
 
-  return new Promise(async (resolve) => {
+  try {
     // If createRepo is true, try to create the repo first using gh CLI
     if (createRepo) {
-      const ghCreateProcess = spawn('gh', [
-        'repo', 'create', repoName,
-        '--public',
-        '--source', '.',
-        '--push'
-      ], {
-        cwd: workspacePath,
-        shell: true,
-      });
+      try {
+        const { stdout } = await execAsync(
+          `gh repo create ${repoName} --public --source . --push`,
+          { cwd: workspacePath }
+        );
 
-      let output = '';
-      let errorOutput = '';
+        // Extract repo URL from output
+        const urlMatch = stdout.match(/https:\/\/github\.com\/[\w-]+\/[\w-]+/);
+        return {
+          success: true,
+          repoUrl: urlMatch ? urlMatch[0] : `https://github.com/${owner || 'user'}/${repoName}`,
+        };
+      } catch {
+        // If repo creation fails (maybe it exists), try to add remote and push
+        const remoteUrl = owner
+          ? `https://github.com/${owner}/${repoName}.git`
+          : `https://github.com/${repoName}.git`;
 
-      ghCreateProcess.stdout.on('data', (data) => {
-        output += data.toString();
-      });
+        try {
+          // Try to add remote (ignore error if it exists)
+          await execAsync(`git remote add origin ${remoteUrl}`, { cwd: workspacePath }).catch(() => {});
 
-      ghCreateProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
+          // Set remote URL in case it exists with different URL
+          await execAsync(`git remote set-url origin ${remoteUrl}`, { cwd: workspacePath });
 
-      ghCreateProcess.on('close', (code) => {
-        if (code === 0) {
-          // Extract repo URL from output
-          const urlMatch = output.match(/https:\/\/github\.com\/[\w-]+\/[\w-]+/);
-          resolve({
+          // Push with upstream tracking
+          await execAsync(`git push -u origin ${branch}`, { cwd: workspacePath });
+
+          return {
             success: true,
-            repoUrl: urlMatch ? urlMatch[0] : `https://github.com/${owner || 'user'}/${repoName}`,
-          });
-        } else {
-          // If repo already exists, try to add remote and push
-          const remoteUrl = owner
-            ? `https://github.com/${owner}/${repoName}.git`
-            : `https://github.com/${repoName}.git`;
-
-          const pushCommands = `git remote add origin ${remoteUrl} 2>/dev/null || git remote set-url origin ${remoteUrl} && git push -u origin ${branch}`;
-
-          const pushProcess = spawn('bash', ['-c', pushCommands], {
-            cwd: workspacePath,
-            shell: true,
-          });
-
-          let pushError = '';
-
-          pushProcess.stderr.on('data', (data) => {
-            pushError += data.toString();
-          });
-
-          pushProcess.on('close', (pushCode) => {
-            if (pushCode === 0) {
-              resolve({
-                success: true,
-                repoUrl: remoteUrl.replace('.git', ''),
-              });
-            } else {
-              resolve({
-                success: false,
-                error: pushError || errorOutput || 'Failed to push to GitHub',
-              });
-            }
-          });
+            repoUrl: remoteUrl.replace('.git', ''),
+          };
+        } catch (pushError) {
+          return {
+            success: false,
+            error: pushError instanceof Error ? pushError.message : 'Failed to push to GitHub',
+          };
         }
-      });
-
-      ghCreateProcess.on('error', (err) => {
-        resolve({ success: false, error: err.message });
-      });
+      }
     } else {
       // Just push to existing remote
-      const pushProcess = spawn('git', ['push', '-u', 'origin', branch], {
-        cwd: workspacePath,
-        shell: true,
-      });
-
-      let errorOutput = '';
-
-      pushProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-
-      pushProcess.on('close', (code) => {
-        if (code === 0) {
-          resolve({
-            success: true,
-            repoUrl: `https://github.com/${owner || 'user'}/${repoName}`,
-          });
-        } else {
-          resolve({
-            success: false,
-            error: errorOutput || 'Failed to push to GitHub',
-          });
-        }
-      });
+      await execAsync(`git push -u origin ${branch}`, { cwd: workspacePath });
+      return {
+        success: true,
+        repoUrl: `https://github.com/${owner || 'user'}/${repoName}`,
+      };
     }
-  });
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to push to GitHub',
+    };
+  }
 }
 
 /**
@@ -247,39 +287,45 @@ export async function getGitStatus(workspacePath: string): Promise<{
   ahead?: number;
   behind?: number;
 }> {
-  return new Promise((resolve) => {
-    const statusProcess = spawn('git', ['status', '--porcelain', '-b'], {
-      cwd: workspacePath,
-      shell: true,
-    });
+  try {
+    const { stdout } = await execAsync('git status --porcelain -b', { cwd: workspacePath });
+    const lines = stdout.trim().split('\n');
+    const branchLine = lines[0] || '';
+    const branchMatch = branchLine.match(/^## (\S+)/);
+    const aheadMatch = branchLine.match(/ahead (\d+)/);
+    const behindMatch = branchLine.match(/behind (\d+)/);
 
-    let output = '';
+    return {
+      hasChanges: lines.length > 1,
+      branch: branchMatch ? branchMatch[1] : undefined,
+      ahead: aheadMatch ? parseInt(aheadMatch[1]) : 0,
+      behind: behindMatch ? parseInt(behindMatch[1]) : 0,
+    };
+  } catch {
+    return { hasChanges: false };
+  }
+}
 
-    statusProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
+/**
+ * Get current commit SHA
+ */
+export async function getCurrentCommitSha(workspacePath: string = process.cwd()): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync('git rev-parse --short HEAD', { cwd: workspacePath });
+    return stdout.trim();
+  } catch {
+    return undefined;
+  }
+}
 
-    statusProcess.on('close', (code) => {
-      if (code === 0) {
-        const lines = output.trim().split('\n');
-        const branchLine = lines[0] || '';
-        const branchMatch = branchLine.match(/^## (\S+)/);
-        const aheadMatch = branchLine.match(/ahead (\d+)/);
-        const behindMatch = branchLine.match(/behind (\d+)/);
-
-        resolve({
-          hasChanges: lines.length > 1,
-          branch: branchMatch ? branchMatch[1] : undefined,
-          ahead: aheadMatch ? parseInt(aheadMatch[1]) : 0,
-          behind: behindMatch ? parseInt(behindMatch[1]) : 0,
-        });
-      } else {
-        resolve({ hasChanges: false });
-      }
-    });
-
-    statusProcess.on('error', () => {
-      resolve({ hasChanges: false });
-    });
-  });
+/**
+ * Check if workspace has uncommitted changes
+ */
+export async function hasUncommittedChanges(workspacePath: string = process.cwd()): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync('git status --porcelain', { cwd: workspacePath });
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
 }

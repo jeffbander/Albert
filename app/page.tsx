@@ -1018,6 +1018,231 @@ export default function Home() {
           break;
         }
 
+        // ============================================
+        // Gmail Email Tools
+        // ============================================
+        case 'compose_email': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'compose',
+              to: parsedArgs.to,
+              subject: parsedArgs.subject,
+              body: parsedArgs.body,
+              cc: parsedArgs.cc,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              pendingId: data.pendingId,
+              message: `I've composed an email to ${data.to} with subject "${data.subject}". The message says: "${data.bodyPreview}..." Should I send it?`,
+              requiresConfirmation: true,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to compose email' });
+          }
+          break;
+        }
+
+        case 'confirm_send_email': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'confirm_send',
+              pendingId: parsedArgs.pendingId,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Email sent successfully! ${data.message}`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to send email' });
+          }
+          break;
+        }
+
+        case 'read_emails': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'read',
+              query: parsedArgs.query,
+              maxResults: parsedArgs.maxResults || '5',
+            }),
+          });
+          const data = await response.json();
+          if (data.success && data.emails) {
+            const emails = Array.isArray(data.emails) ? data.emails : [];
+            const emailSummaries = emails.slice(0, 5).map((e: { from?: string; subject?: string; snippet?: string; id?: string }) =>
+              `From: ${e.from || 'Unknown'}, Subject: "${e.subject || 'No subject'}", Preview: ${(e.snippet || '').slice(0, 50)}...`
+            ).join(' | ');
+            result = JSON.stringify({
+              success: true,
+              message: `Found ${emails.length} emails. ${emailSummaries || 'No emails found.'}`,
+              emails: emails.slice(0, 5),
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to read emails' });
+          }
+          break;
+        }
+
+        case 'read_email_content': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'read_one',
+              messageId: parsedArgs.messageId,
+            }),
+          });
+          const data = await response.json();
+          if (data.success && data.email) {
+            const email = data.email;
+            result = JSON.stringify({
+              success: true,
+              from: email.from,
+              subject: email.subject,
+              body: (email.body || '').slice(0, 1000),
+              message: `Email from ${email.from}: ${(email.body || '').slice(0, 500)}`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to read email' });
+          }
+          break;
+        }
+
+        case 'search_emails': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'search',
+              query: parsedArgs.query,
+              maxResults: parsedArgs.maxResults || '10',
+            }),
+          });
+          const data = await response.json();
+          if (data.success && data.emails) {
+            const emails = Array.isArray(data.emails) ? data.emails : [];
+            result = JSON.stringify({
+              success: true,
+              message: `Found ${emails.length} email${emails.length !== 1 ? 's' : ''} matching "${parsedArgs.query}".`,
+              emails: emails.slice(0, 10),
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Search failed' });
+          }
+          break;
+        }
+
+        case 'draft_email': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'draft',
+              to: parsedArgs.to,
+              subject: parsedArgs.subject,
+              body: parsedArgs.body,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Draft created for ${parsedArgs.to}. Subject: "${parsedArgs.subject}". You can find it in your Drafts folder.`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to create draft' });
+          }
+          break;
+        }
+
+        case 'reply_to_email': {
+          const response = await fetch('/api/gmail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'reply',
+              messageId: parsedArgs.messageId,
+              body: parsedArgs.body,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: 'Reply sent successfully.',
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to send reply' });
+          }
+          break;
+        }
+
+        // ============================================
+        // Contact Management Tools
+        // ============================================
+        case 'add_contact': {
+          const response = await fetch('/api/contacts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add',
+              name: parsedArgs.name,
+              email: parsedArgs.email,
+              nickname: parsedArgs.nickname,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: `Got it! I've saved ${parsedArgs.name}'s email as ${parsedArgs.email}. Next time you say "email ${parsedArgs.name}", I'll know who you mean.`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to add contact' });
+          }
+          break;
+        }
+
+        case 'lookup_contact': {
+          const response = await fetch('/api/contacts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'lookup',
+              name: parsedArgs.name,
+            }),
+          });
+          const data = await response.json();
+          if (data.success && data.found) {
+            result = JSON.stringify({
+              success: true,
+              found: true,
+              name: data.contact.name,
+              email: data.contact.email,
+              message: `${data.contact.name}'s email is ${data.contact.email}.`,
+            });
+          } else {
+            result = JSON.stringify({
+              success: true,
+              found: false,
+              message: `I don't have an email saved for "${parsedArgs.name}". Would you like to add their email?`,
+            });
+          }
+          break;
+        }
+
         default:
           result = JSON.stringify({ error: `Unknown function: ${name}` });
       }
