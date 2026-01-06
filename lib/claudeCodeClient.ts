@@ -49,6 +49,17 @@ const DEFAULT_BUILD_TOOLS = [
 ];
 
 /**
+ * MCP Servers configuration for extended capabilities
+ * Playwright gives Albert browser automation abilities
+ */
+const MCP_SERVERS = {
+  playwright: {
+    command: 'npx',
+    args: ['@anthropic-ai/mcp-server-playwright'],
+  },
+};
+
+/**
  * Generate a system prompt for building a specific type of project
  */
 export function generateBuildPrompt(
@@ -104,12 +115,22 @@ ${contextSection}
 6. Create a .gitignore file
 7. Make the project production-ready
 
+## Browser Automation (Playwright)
+You have access to Playwright for browser automation. You can:
+- Navigate to web pages
+- Click buttons and fill forms
+- Take screenshots of your work
+- Read page content and console logs
+- Test the UI of apps you build
+Use these capabilities to verify your builds work correctly in a real browser.
+
 ## Process
 1. First, plan the project structure and key components
 2. Create the project files directly in the current directory (NO subdirectories for project root)
 3. Install dependencies with npm install
 4. Test that the project runs correctly
-5. Fix any issues you find
+5. Use Playwright to verify the UI works in a browser
+6. Fix any issues you find
 
 Begin building the project now.`;
 }
@@ -149,6 +170,7 @@ export async function runClaudeCode(
         maxBudgetUsd: options.maxBudgetUsd || 15.0,
         maxTurns: options.maxTurns || 100,
         includePartialMessages: true,
+        mcpServers: MCP_SERVERS, // Enable Playwright for browser automation
       },
     });
 
