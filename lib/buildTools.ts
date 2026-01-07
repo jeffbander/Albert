@@ -685,6 +685,94 @@ export const BUILD_TOOLS: OpenAITool[] = [
       required: ['name'],
     },
   },
+
+  // NotebookLM Research Tools
+  {
+    type: 'function',
+    name: 'start_research',
+    description: 'Start a new NotebookLM research session on a topic. Opens NotebookLM in Chrome, creates a new notebook, and begins gathering sources. Use when user says "research X", "learn about X", "investigate X", or "I want to understand X".',
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'The research topic or question to explore. Be specific and descriptive.',
+        },
+        initialSources: {
+          type: 'string',
+          description: 'Optional comma-separated URLs to add as initial sources.',
+        },
+      },
+      required: ['topic'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'add_research_source',
+    description: 'Add a source to the current NotebookLM research notebook. Supports URLs, YouTube videos, Google Docs, or pasted text. Use when user wants to add more material to their research.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sourceType: {
+          type: 'string',
+          enum: ['url', 'youtube', 'google_doc', 'text'],
+          description: 'Type of source to add.',
+        },
+        content: {
+          type: 'string',
+          description: 'The URL, video link, doc URL, or text content to add.',
+        },
+        description: {
+          type: 'string',
+          description: 'Optional description of what this source covers.',
+        },
+      },
+      required: ['sourceType', 'content'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'ask_notebook',
+    description: 'Ask NotebookLM a question about the research gathered so far. The AI will analyze all sources and provide an answer. Use when user asks questions about their research topic.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: {
+          type: 'string',
+          description: 'The question to ask about the research material.',
+        },
+      },
+      required: ['question'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_research_summary',
+    description: 'Get a summary of the current research findings from NotebookLM. Use when user asks "what did you find?", "summarize the research", or wants an overview of the material.',
+    parameters: {
+      type: 'object',
+      properties: {
+        focusArea: {
+          type: 'string',
+          description: 'Optional specific area to focus the summary on.',
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    name: 'close_research',
+    description: 'End the current research session and clean up. The notebook remains saved in NotebookLM for future reference. Use when user is done researching or wants to start a new topic.',
+    parameters: {
+      type: 'object',
+      properties: {
+        saveNotes: {
+          type: 'string',
+          description: 'Optional notes to save about this research session.',
+        },
+      },
+    },
+  },
 ];
 
 /**

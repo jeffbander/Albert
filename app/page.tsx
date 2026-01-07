@@ -13,8 +13,15 @@ import {
   formatProgressForVoice,
   shouldNotifyVoice,
 } from '@/lib/buildProgressManager';
+import {
+  subscribeToResearch,
+  unsubscribeFromResearch,
+  formatResearchProgressForVoice,
+  shouldNotifyVoiceResearch,
+} from '@/lib/researchProgressManager';
 import { onClarificationRequest } from '@/lib/interactiveSession';
 import type { BuildProgressEvent } from '@/types/build';
+import type { ResearchProgressEvent, ResearchPhase } from '@/types/research';
 
 interface ConversationMessage {
   id: string;
@@ -64,6 +71,11 @@ export default function Home() {
   const buildUnsubscribeRef = useRef<(() => void) | null>(null);
   const clarificationUnsubscribeRef = useRef<(() => void) | null>(null);
 
+  // Research progress tracking
+  const activeResearchIdRef = useRef<string | null>(null);
+  const lastNotifiedResearchPhaseRef = useRef<ResearchPhase | null>(null);
+  const researchUnsubscribeRef = useRef<(() => void) | null>(null);
+
   // Voice identification
   const { loadSpeakers, identifySpeaker } = useEagle();
 
@@ -87,6 +99,14 @@ export default function Home() {
     unsubscribeAll();
     activeBuildIdRef.current = null;
     lastNotifiedPhaseRef.current = null;
+
+    // Cleanup research subscriptions
+    if (researchUnsubscribeRef.current) {
+      researchUnsubscribeRef.current();
+      researchUnsubscribeRef.current = null;
+    }
+    activeResearchIdRef.current = null;
+    lastNotifiedResearchPhaseRef.current = null;
 
     // End conversation if we have one
     if (conversationIdRef.current && startTimeRef.current) {
@@ -465,6 +485,43 @@ export default function Home() {
       );
     });
     clarificationUnsubscribeRef.current = clarificationUnsub;
+  }, [speakProactively]);
+
+  // Subscribe to research progress updates
+  const subscribeToResearchProgress = useCallback((sessionId: string, topic: string) => {
+    // Unsubscribe from previous research if any
+    if (researchUnsubscribeRef.current) {
+      researchUnsubscribeRef.current();
+    }
+
+    activeResearchIdRef.current = sessionId;
+    lastNotifiedResearchPhaseRef.current = null;
+
+    const unsubscribe = subscribeToResearch(sessionId, {
+      onProgress: (event: ResearchProgressEvent) => {
+        // Only speak on significant changes
+        if (shouldNotifyVoiceResearch(event, lastNotifiedResearchPhaseRef.current || undefined)) {
+          lastNotifiedResearchPhaseRef.current = event.phase;
+          const voiceMessage = formatResearchProgressForVoice(event);
+          console.log(`[Research Progress] ${event.phase}: ${voiceMessage}`);
+          speakProactively(voiceMessage);
+        }
+      },
+      onComplete: (sid: string, summary: string) => {
+        console.log(`[Research Complete] ${sid}: ${summary}`);
+        speakProactively(`Your research on "${topic}" is complete. ${summary.slice(0, 300)}`);
+        activeResearchIdRef.current = null;
+        researchUnsubscribeRef.current = null;
+      },
+      onError: (sid: string, error: string) => {
+        console.log(`[Research Error] ${sid}: ${error}`);
+        speakProactively(`I ran into an issue with the research: ${error}`);
+        activeResearchIdRef.current = null;
+        researchUnsubscribeRef.current = null;
+      },
+    });
+
+    researchUnsubscribeRef.current = unsubscribe;
   }, [speakProactively]);
 
   // Execute function calls from the model
@@ -1243,6 +1300,119 @@ export default function Home() {
           break;
         }
 
+        // NotebookLM Research Tools
+        case 'start_research': {
+          const response = await fetch('/api/notebooklm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'start_research',
+              topic: parsedArgs.topic,
+              initialSources: parsedArgs.initialSources,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            // Subscribe to research progress
+            subscribeToResearchProgress(data.sessionId, parsedArgs.topic);
+            result = JSON.stringify({
+              success: true,
+              sessionId: data.sessionId,
+              message: `Starting research on "${parsedArgs.topic}". I'll create a NotebookLM notebook and begin gathering sources.`,
+            });
+          } else {
+            result = JSON.stringify({
+              success: false,
+              error: data.error,
+              message: data.error || 'Failed to start research.',
+            });
+          }
+          break;
+        }
+
+        case 'add_research_source': {
+          const response = await fetch('/api/notebooklm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add_source',
+              sourceType: parsedArgs.sourceType,
+              content: parsedArgs.content,
+              description: parsedArgs.description,
+            }),
+          });
+          const data = await response.json();
+          result = JSON.stringify({
+            success: data.success,
+            message: data.success
+              ? `Adding ${parsedArgs.sourceType} source to the research...`
+              : data.error || 'Failed to add source.',
+          });
+          break;
+        }
+
+        case 'ask_notebook': {
+          const response = await fetch('/api/notebooklm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'ask_notebook',
+              question: parsedArgs.question,
+            }),
+          });
+          const data = await response.json();
+          result = JSON.stringify({
+            success: data.success,
+            message: data.success
+              ? "Asking NotebookLM... I'll tell you when I have an answer."
+              : data.error || 'Failed to ask question.',
+          });
+          break;
+        }
+
+        case 'get_research_summary': {
+          const response = await fetch('/api/notebooklm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'get_summary',
+              focusArea: parsedArgs.focusArea,
+            }),
+          });
+          const data = await response.json();
+          result = JSON.stringify({
+            success: data.success,
+            message: data.success
+              ? 'Generating research summary...'
+              : data.error || 'Failed to get summary.',
+          });
+          break;
+        }
+
+        case 'close_research': {
+          // Unsubscribe from research progress if active
+          if (activeResearchIdRef.current && researchUnsubscribeRef.current) {
+            researchUnsubscribeRef.current();
+            researchUnsubscribeRef.current = null;
+            activeResearchIdRef.current = null;
+          }
+
+          const response = await fetch('/api/notebooklm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'close_research',
+              saveNotes: parsedArgs.saveNotes,
+            }),
+          });
+          const data = await response.json();
+          result = JSON.stringify({
+            success: data.success,
+            message: 'Research session closed. Your notebook is saved in NotebookLM.',
+          });
+          break;
+        }
+
         default:
           result = JSON.stringify({ error: `Unknown function: ${name}` });
       }
@@ -1268,7 +1438,7 @@ export default function Home() {
         type: 'response.create',
       }));
     }
-  }, [subscribeToBuildProgress]);
+  }, [subscribeToBuildProgress, subscribeToResearchProgress]);
 
   // Handle realtime events from OpenAI
   const handleRealtimeEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
