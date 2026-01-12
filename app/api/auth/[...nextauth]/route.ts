@@ -5,6 +5,10 @@
  * Handles all authentication-related requests (signin, signout, session, etc.)
  */
 
+// Force dynamic rendering to prevent build-time database connection
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 import { handlers } from '@/lib/auth/auth';
 
 export const { GET, POST } = handlers;
