@@ -9,6 +9,9 @@ import {
 } from '@/lib/db';
 import { generateSelfAwarenessSummary } from '@/lib/metacognition';
 
+// Force dynamic rendering for API routes with database access
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const [

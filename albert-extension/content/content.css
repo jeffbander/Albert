@@ -1,0 +1,155 @@
+/* Albert Floating Voice Button */
+
+#albert-voice-button {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+  font-size: 24px;
+}
+
+#albert-voice-button:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 30px rgba(102, 126, 234, 0.5);
+}
+
+#albert-voice-button:active {
+  transform: scale(0.95);
+}
+
+#albert-voice-button.listening {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  animation: albert-pulse 1.5s infinite;
+}
+
+#albert-voice-button.hidden {
+  display: none;
+}
+
+@keyframes albert-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 20px rgba(239, 68, 68, 0);
+  }
+}
+
+/* Albert Voice Orb */
+#albert-voice-orb {
+  width: 32px;
+  height: 32px;
+  background: radial-gradient(circle at 30% 30%, #fff, #667eea);
+  border-radius: 50%;
+  animation: albert-orb-idle 3s ease-in-out infinite;
+}
+
+#albert-voice-button.listening #albert-voice-orb {
+  animation: albert-orb-listening 0.5s ease-in-out infinite;
+}
+
+@keyframes albert-orb-idle {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+@keyframes albert-orb-listening {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+
+/* Albert Toast Notification */
+#albert-toast {
+  position: fixed;
+  bottom: 100px;
+  right: 24px;
+  background: #1a1a2e;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  z-index: 2147483646;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.3s, transform 0.3s;
+  max-width: 300px;
+}
+
+#albert-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Albert Mini Transcript */
+#albert-mini-transcript {
+  position: fixed;
+  bottom: 100px;
+  right: 24px;
+  width: 300px;
+  max-height: 200px;
+  background: #1a1a2e;
+  color: white;
+  padding: 16px;
+  border-radius: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+  z-index: 2147483646;
+  overflow-y: auto;
+  display: none;
+}
+
+#albert-mini-transcript.visible {
+  display: block;
+}
+
+#albert-mini-transcript .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#albert-mini-transcript .header span {
+  font-weight: 600;
+  color: #667eea;
+}
+
+#albert-mini-transcript .close-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+}
+
+#albert-mini-transcript .content {
+  line-height: 1.5;
+  color: #ccc;
+}

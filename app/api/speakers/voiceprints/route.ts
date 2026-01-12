@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getAllSpeakerProfiles, initDatabase } from '@/lib/db';
 
+// Force dynamic rendering for API routes with database access
+export const dynamic = 'force-dynamic';
+
 // GET - Get all voiceprints for identification
 // This returns the full voiceprint data needed for Eagle identification
 export async function GET() {

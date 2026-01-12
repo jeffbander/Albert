@@ -9,6 +9,9 @@ import {
   getTotalInteractionTime,
 } from '@/lib/db';
 
+// Force dynamic rendering for API routes with database access
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const [

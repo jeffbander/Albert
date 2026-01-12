@@ -2,6 +2,9 @@
   "name": "echo",
   "version": "1.0.0",
   "description": "Echo - Voice-first AI companion with persistent memory",
+  "engines": {
+    "node": ">=20.x <=22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -18,7 +21,7 @@
     "@libsql/client": "^0.15.15",
     "@picovoice/eagle-web": "^1.0.0",
     "@picovoice/web-voice-processor": "^4.0.9",
-    "@types/node": "^24.10.1",
+    "@types/node": "^22.19.5",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vercel/sdk": "^1.18.5",

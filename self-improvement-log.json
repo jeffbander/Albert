@@ -1,5 +1,553 @@
 [
   {
+    "id": "50bee082-137e-4415-aaa9-25080a4a0e7a",
+    "timestamp": "2026-01-07T03:46:32.304Z",
+    "task": "Enhance the interactive session management in the code by improving patterns to detect questions from Claude, allowing for more flexible and dynamic user input, and refining the mechanism to pause and resume sessions based on user responses. Store improvements in the `interactiveSession.ts` file.",
+    "reason": "To make Albert more agile and interactive, enhancing the user experience by providing more natural and responsive interactions during build sessions.",
+    "status": "completed",
+    "autoCommit": true,
+    "output": ": `isSessionTimedOut()`, `getTimedOutSessions()`\n   - **Auto-resume**: `autoResumeTimedOutSession()` with default responses\n   - **Activity tracking**: `lastActivity`, `waitingSince` timestamps\n   - **Custom timeouts**: Per-session `responseTimeout` configuration\n   - **Enhanced cleanup**: `cleanupOldSessions()` with auto-resume option\n\n#### 7. **New Utility Functions**\n   - `updateSessionActivity()`: Keep-alive for active sessions\n   - `getWaitingSessionsByConfidence()`: Prioritize high-confidence questions\n   - `hasActiveQuestion()`: Quick check for pending questions\n   - `getSessionStats()`: Comprehensive session statistics\n   - `extractCoreQuestion()`: Extract the main question from verbose messages\n\n#### 8. **Enriched Context Tracking**\n   - Sessions now store confidence scores\n   - Enhanced context entries include both question and response\n   - Better continuity for multi-turn conversations\n\n### 📊 Statistics\n\n- **Original**: ~306 lines\n- **Enhanced**: 766 lines  \n- **Growth**: 2.5x increase with valuable features\n- **New exports**: 10 additional functions\n- **Pattern coverage**: 40+ clarification patterns, 15+ rhetorical filters\n\n### ✅ Quality Improvements\n\n- ✓ No TypeScript compilation errors\n- ✓ Backward compatible with existing code\n- ✓ All patterns tested and validated\n- ✓ Comprehensive inline documentation\n- ✓ Usage examples in header comments\n\n### 🚀 Impact on Albert\n\nAlbert can now:\n1. **Better distinguish** between real questions and rhetorical statements\n2. **Prioritize** high-confidence questions that truly need user input\n3. **Handle timeouts** gracefully without hanging indefinitely\n4. **Extract options** from various question formats\n5. **Validate responses** intelligently (supports \"1\", \"option 1\", partial matches)\n6. **Track session health** with statistics and monitoring\n7. **Maintain context** better across multi-turn interactions\n\nThe enhancements make Albert more responsive, intelligent, and user-friendly during interactive build sessions!",
+    "activities": [
+      {
+        "id": "toolu_01DegCu7pUSVapyqyWVxgSmA",
+        "timestamp": "2026-01-07T03:46:46.572Z",
+        "type": "search",
+        "summary": "Searching for files",
+        "status": "complete",
+        "toolName": "Glob",
+        "duration": 479
+      },
+      {
+        "id": "toolu_01Bxxrbk5dTEWUR4BLzBZdX8",
+        "timestamp": "2026-01-07T03:46:47.051Z",
+        "type": "search",
+        "summary": "Searching for files",
+        "status": "complete",
+        "toolName": "Glob",
+        "duration": 166
+      },
+      {
+        "id": "8986e6ce-b1e6-4fe7-98c7-cf8997290fb2",
+        "timestamp": "2026-01-07T03:46:47.218Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01TbbkBMEsW9JZyYdW9f4LRB",
+        "timestamp": "2026-01-07T03:46:58.214Z",
+        "type": "search",
+        "summary": "Searching for files",
+        "status": "complete",
+        "toolName": "Glob",
+        "duration": 622
+      },
+      {
+        "id": "toolu_01FB7iivVqSt47g9tskkd2ua",
+        "timestamp": "2026-01-07T03:46:58.836Z",
+        "type": "search",
+        "summary": "Searching for files",
+        "status": "complete",
+        "toolName": "Glob",
+        "duration": 523
+      },
+      {
+        "id": "7fff95f6-67bb-4056-8368-d6448c212ab1",
+        "timestamp": "2026-01-07T03:46:59.360Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_0159ufSQoQaNsvaYydRhFZAq",
+        "timestamp": "2026-01-07T03:47:10.237Z",
+        "type": "file_read",
+        "summary": "Reading file",
+        "status": "complete",
+        "toolName": "Read",
+        "duration": 573
+      },
+      {
+        "id": "943fdc04-5137-4c6d-9aa2-411def118655",
+        "timestamp": "2026-01-07T03:47:10.812Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01Tx4CC4P3iktmCAM1eoNKof",
+        "timestamp": "2026-01-07T03:47:18.035Z",
+        "type": "search",
+        "summary": "Searching code for \"\"",
+        "status": "complete",
+        "toolName": "Grep",
+        "duration": 712
+      },
+      {
+        "id": "150b2e7e-be38-4550-8436-c165adba1063",
+        "timestamp": "2026-01-07T03:47:18.748Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_0181kckovkMaV9MKUHRSrkam",
+        "timestamp": "2026-01-07T03:47:25.463Z",
+        "type": "file_read",
+        "summary": "Reading file",
+        "status": "complete",
+        "toolName": "Read",
+        "duration": 822
+      },
+      {
+        "id": "toolu_01LsTRkks3k484ehyKgZEzEo",
+        "timestamp": "2026-01-07T03:47:26.285Z",
+        "type": "search",
+        "summary": "Searching code for \"\"",
+        "status": "complete",
+        "toolName": "Grep",
+        "duration": 634
+      },
+      {
+        "id": "2de8c56d-0c4f-4530-9f6f-0e96654d9408",
+        "timestamp": "2026-01-07T03:47:26.919Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_011HmoHav3MbFRCPnBTzF4d3",
+        "timestamp": "2026-01-07T03:47:42.829Z",
+        "type": "search",
+        "summary": "Searching code for \"\"",
+        "status": "complete",
+        "toolName": "Grep",
+        "duration": 1092
+      },
+      {
+        "id": "30c2bb7b-d2a7-4ade-ad0b-23c0b5c7d4a9",
+        "timestamp": "2026-01-07T03:47:43.921Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01DwawXxBHTDKkqh35Zbkxr7",
+        "timestamp": "2026-01-07T03:47:51.417Z",
+        "type": "search",
+        "summary": "Searching code for \"\"",
+        "status": "complete",
+        "toolName": "Grep",
+        "duration": 774
+      },
+      {
+        "id": "2027b0db-5a5c-4b4f-ae8d-80be90121d0e",
+        "timestamp": "2026-01-07T03:47:52.192Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01PBkejbsEtRCr6kGMSSW1ys",
+        "timestamp": "2026-01-07T03:47:59.367Z",
+        "type": "file_read",
+        "summary": "Reading file",
+        "status": "complete",
+        "toolName": "Read",
+        "duration": 630
+      },
+      {
+        "id": "689c9fbf-6cac-44cc-8827-4b6ab4ad9a27",
+        "timestamp": "2026-01-07T03:47:59.998Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01WPbuSg5knZeDV1VkPhzC14",
+        "timestamp": "2026-01-07T03:48:07.847Z",
+        "type": "file_read",
+        "summary": "Reading file",
+        "status": "complete",
+        "toolName": "Read",
+        "toolInput": {
+          "0": ":",
+          "1": " "
+        },
+        "duration": 504
+      },
+      {
+        "id": "bab95b3c-181a-4345-8f73-4b9f78d0791e",
+        "timestamp": "2026-01-07T03:48:08.352Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01NZcsgB2VieKipRKbmafDkB",
+        "timestamp": "2026-01-07T03:48:18.681Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 22136
+      },
+      {
+        "id": "850fdcb9-2b66-40d9-9852-be1dfbcea02b",
+        "timestamp": "2026-01-07T03:48:40.819Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_015B3nVjvuEonEHEXuj9R6ge",
+        "timestamp": "2026-01-07T03:48:51.052Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {},
+        "duration": 15789
+      },
+      {
+        "id": "97e0324d-23e1-447b-b033-77754fb10466",
+        "timestamp": "2026-01-07T03:49:06.844Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_0162wWDyqJZtCxENqU9vNi1P",
+        "timestamp": "2026-01-07T03:49:15.811Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {},
+        "duration": 18438
+      },
+      {
+        "id": "ac67cf2c-bb53-4bfa-b52d-334713cd0a89",
+        "timestamp": "2026-01-07T03:49:34.251Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_013jV8aB18U3mJZhLLoe9YnG",
+        "timestamp": "2026-01-07T03:49:41.174Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {},
+        "duration": 4274
+      },
+      {
+        "id": "4582684c-927c-4ed5-aa1f-918178493347",
+        "timestamp": "2026-01-07T03:49:45.449Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01Qgozo1E7kKJpvK9fFeKzUt",
+        "timestamp": "2026-01-07T03:49:53.381Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 3525
+      },
+      {
+        "id": "478bbe2c-1ae8-4415-9e2d-236a054c29b9",
+        "timestamp": "2026-01-07T03:49:56.908Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_0155pSH9myepBY1LDocRkXXg",
+        "timestamp": "2026-01-07T03:50:03.711Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 4755
+      },
+      {
+        "id": "c2460e54-8a06-4d1a-8c1a-a43c25be1b56",
+        "timestamp": "2026-01-07T03:50:08.467Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01F5mWaMP4Co7uzWnsqZ3pmR",
+        "timestamp": "2026-01-07T03:50:16.162Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 7595
+      },
+      {
+        "id": "f120ed36-80a0-44c9-9f03-8121c286497b",
+        "timestamp": "2026-01-07T03:50:23.758Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01Y1xArqBXtVUTca6vRKEB6y",
+        "timestamp": "2026-01-07T03:50:32.452Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 13197
+      },
+      {
+        "id": "8ad4eb6b-8f33-4bf5-8ecc-9595368451bd",
+        "timestamp": "2026-01-07T03:50:45.651Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01V9sZZdmLdsvwKC7pjEZkbv",
+        "timestamp": "2026-01-07T03:50:54.658Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {},
+        "duration": 10735
+      },
+      {
+        "id": "b0f9f80c-4b55-49b2-a58b-e02fc504b22f",
+        "timestamp": "2026-01-07T03:51:05.396Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01NLqT5KFdttNo31DRACp376",
+        "timestamp": "2026-01-07T03:51:25.338Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {
+          "0": ":",
+          "1": " "
+        },
+        "duration": 10564
+      },
+      {
+        "id": "53271b48-e71a-4660-9a60-112ee262a7a8",
+        "timestamp": "2026-01-07T03:51:35.903Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_019KgdBcRBvaiK8UUT5H9z4b",
+        "timestamp": "2026-01-07T03:51:45.101Z",
+        "type": "command",
+        "summary": "Running: ",
+        "status": "complete",
+        "toolName": "Bash",
+        "duration": 1191
+      },
+      {
+        "id": "10410392-907b-4dc5-8f18-22f5bc6fbd85",
+        "timestamp": "2026-01-07T03:51:46.294Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01KMXeUx3r2Aop4J3pxNjFWj",
+        "timestamp": "2026-01-07T03:52:10.345Z",
+        "type": "file_read",
+        "summary": "Reading file",
+        "status": "complete",
+        "toolName": "Read",
+        "duration": 683
+      },
+      {
+        "id": "6f56e3a1-b72e-439d-8496-a3a914a75836",
+        "timestamp": "2026-01-07T03:52:11.028Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01SzR19Q7Cat6cyn4HGoGxew",
+        "timestamp": "2026-01-07T03:52:19.595Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 1850
+      },
+      {
+        "id": "ce59e47c-bfe5-4229-b724-739fa0c7db87",
+        "timestamp": "2026-01-07T03:52:21.445Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_018S8RPJ9heRYntxwoiZbGmX",
+        "timestamp": "2026-01-07T03:52:29.602Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 2993
+      },
+      {
+        "id": "21a7eaed-5f2c-4e6a-ac55-0eb6b2f40262",
+        "timestamp": "2026-01-07T03:52:32.597Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01J6rnxKJrG8UrRhULpVusWw",
+        "timestamp": "2026-01-07T03:52:40.714Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {},
+        "duration": 4745
+      },
+      {
+        "id": "37d0b47c-7b22-4211-a45f-ccbc9eca83d2",
+        "timestamp": "2026-01-07T03:52:45.461Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01RWRzoGodYt1oAMXaKRUkoW",
+        "timestamp": "2026-01-07T03:52:54.095Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "duration": 2625
+      },
+      {
+        "id": "081fa302-adfb-4cc7-824d-f5705e84449f",
+        "timestamp": "2026-01-07T03:52:56.721Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01Wcc9V6kFA7nh69XPYoUpYF",
+        "timestamp": "2026-01-07T03:53:06.137Z",
+        "type": "command",
+        "summary": "Running: ",
+        "status": "complete",
+        "toolName": "Bash",
+        "duration": 419
+      },
+      {
+        "id": "583a00ba-57da-4c1e-88f4-48ae9fa40ee5",
+        "timestamp": "2026-01-07T03:53:06.558Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01TWtyVQYeTVugnzGoHhWKgh",
+        "timestamp": "2026-01-07T03:53:36.214Z",
+        "type": "command",
+        "summary": "Running: ",
+        "status": "complete",
+        "toolName": "Bash",
+        "toolInput": {},
+        "duration": 6806
+      },
+      {
+        "id": "3636a20a-cb47-4df7-8e17-69045139cebd",
+        "timestamp": "2026-01-07T03:53:43.021Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01HwBxmQpePukKey6oMpipkk",
+        "timestamp": "2026-01-07T03:53:58.226Z",
+        "type": "file_edit",
+        "summary": "Editing file",
+        "status": "complete",
+        "toolName": "Edit",
+        "details": "Replacing: \"...\"",
+        "toolInput": {},
+        "duration": 14464
+      },
+      {
+        "id": "30cb1211-02cf-453c-9787-617f7a0fb9e3",
+        "timestamp": "2026-01-07T03:54:12.691Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01GTwqtpeU9Pn3WMuJ8nPm8b",
+        "timestamp": "2026-01-07T03:54:21.330Z",
+        "type": "command",
+        "summary": "Running: ",
+        "status": "complete",
+        "toolName": "Bash",
+        "duration": 873
+      },
+      {
+        "id": "6c5433c2-19b3-4cbc-bdbd-091ee1fd22d9",
+        "timestamp": "2026-01-07T03:54:22.443Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "toolu_01QRyKJHHH7h23urQYgYXv7o",
+        "timestamp": "2026-01-07T03:54:47.712Z",
+        "type": "command",
+        "summary": "Running: ",
+        "status": "complete",
+        "toolName": "Bash",
+        "duration": 1022
+      },
+      {
+        "id": "97b81417-694f-4fb9-bf36-8dce803f7293",
+        "timestamp": "2026-01-07T03:54:48.734Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      },
+      {
+        "id": "bcdd094e-6a9b-4649-9206-dc03729ef600",
+        "timestamp": "2026-01-07T03:55:20.884Z",
+        "type": "complete",
+        "summary": "Step complete",
+        "status": "complete"
+      }
+    ],
+    "cost": 0.7373989000000001
+  },
+  {
     "id": "8089f80f-1f28-4b13-85b5-8a3b236f2773",
     "timestamp": "2026-01-06T03:12:17.828Z",
     "task": "Review all recent self-improvements and deploy any pending changes to keep the system up to date. This includes checking for any new features, bug fixes, or performance enhancements that have been suggested and applying them as needed.",

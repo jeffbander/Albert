@@ -1,4 +1,8 @@
 import { NextResponse } from 'next/server';
+
+// Force dynamic rendering for API routes with database access
+export const dynamic = 'force-dynamic';
+
 import {
   getEchoSelfModel,
   getTimeline,

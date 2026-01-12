@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { chromium, Browser, Page } from 'playwright';
-
-// Store browser instance globally for reuse
-let browserInstance: Browser | null = null;
-let pageInstance: Page | null = null;
+import { createBrowserProviderFromEnv, BrowserProviderError } from '@/lib/browser';
 
 // Common site shortcuts
 const SITE_SHORTCUTS: Record<string, string> = {
@@ -45,92 +41,90 @@ function normalizeUrl(input: string): string {
   return input;
 }
 
-async function getBrowser(): Promise<Browser> {
-  if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await chromium.launch({
-      headless: false, // Show the browser window
-      args: ['--start-maximized'],
-    });
-  }
-  return browserInstance;
-}
-
-async function getPage(): Promise<Page> {
-  const browser = await getBrowser();
-
-  if (!pageInstance || pageInstance.isClosed()) {
-    const context = await browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-    });
-    pageInstance = await context.newPage();
-  }
-
-  return pageInstance;
-}
-
 export async function POST(request: NextRequest) {
+  let provider = null;
+
   try {
     const body = await request.json();
     const { action, ...params } = body;
 
+    // Create provider from environment (uses Browserbase in production, local CDP in dev)
+    provider = createBrowserProviderFromEnv();
+
     switch (action) {
       case 'open': {
         const url = normalizeUrl(params.url);
-        const page = await getPage();
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        const title = await page.title();
+        await provider.connect();
+        await provider.navigateTo(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const currentUrl = await provider.getCurrentUrl();
+        const title = await provider.evaluate(() => document.title);
+
         return NextResponse.json({
           success: true,
           message: `Opened ${url}`,
           title,
-          url: page.url(),
+          url: currentUrl,
         });
       }
 
       case 'screenshot': {
-        if (!pageInstance || pageInstance.isClosed()) {
-          return NextResponse.json({
-            success: false,
-            error: 'No browser page is open. Open a website first.',
-          });
+        const url = params.url ? normalizeUrl(params.url) : null;
+        await provider.connect();
+
+        if (url) {
+          await provider.navigateTo(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         }
-        const screenshot = await pageInstance.screenshot({ type: 'png' });
+
+        const screenshot = await provider.screenshot({ type: 'png' });
         const base64 = screenshot.toString('base64');
-        const title = await pageInstance.title();
+        const title = await provider.evaluate(() => document.title);
+        const currentUrl = await provider.getCurrentUrl();
+
         return NextResponse.json({
           success: true,
           screenshot: base64,
           title,
-          url: pageInstance.url(),
+          url: currentUrl,
         });
       }
 
       case 'click': {
-        if (!pageInstance || pageInstance.isClosed()) {
+        const { selector, url } = params;
+
+        if (!url) {
           return NextResponse.json({
             success: false,
-            error: 'No browser page is open. Open a website first.',
-          });
+            error: 'URL is required for click action in serverless mode',
+          }, { status: 400 });
         }
-        const { selector } = params;
-        await pageInstance.click(selector, { timeout: 10000 });
-        await pageInstance.waitForLoadState('domcontentloaded');
+
+        await provider.connect();
+        await provider.navigateTo(normalizeUrl(url), { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await provider.click(selector);
+        await provider.waitForTimeout(1000); // Wait for any navigation
+        const currentUrl = await provider.getCurrentUrl();
+
         return NextResponse.json({
           success: true,
           message: `Clicked on "${selector}"`,
-          url: pageInstance.url(),
+          url: currentUrl,
         });
       }
 
       case 'type': {
-        if (!pageInstance || pageInstance.isClosed()) {
+        const { selector, text, url } = params;
+
+        if (!url) {
           return NextResponse.json({
             success: false,
-            error: 'No browser page is open. Open a website first.',
-          });
+            error: 'URL is required for type action in serverless mode',
+          }, { status: 400 });
         }
-        const { selector, text } = params;
-        await pageInstance.fill(selector, text, { timeout: 10000 });
+
+        await provider.connect();
+        await provider.navigateTo(normalizeUrl(url), { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await provider.fill(selector, text);
+
         return NextResponse.json({
           success: true,
           message: `Typed "${text}" into "${selector}"`,
@@ -138,13 +132,18 @@ export async function POST(request: NextRequest) {
       }
 
       case 'scroll': {
-        if (!pageInstance || pageInstance.isClosed()) {
+        const { direction, amount, url } = params;
+
+        if (!url) {
           return NextResponse.json({
             success: false,
-            error: 'No browser page is open. Open a website first.',
-          });
+            error: 'URL is required for scroll action in serverless mode',
+          }, { status: 400 });
         }
-        const { direction, amount } = params;
+
+        await provider.connect();
+        await provider.navigateTo(normalizeUrl(url), { waitUntil: 'domcontentloaded', timeout: 30000 });
+
         let pixels = 500; // default
         if (amount === 'page') {
           pixels = 800;
@@ -154,13 +153,8 @@ export async function POST(request: NextRequest) {
           pixels = parseInt(amount);
         }
 
-        if (direction === 'up') {
-          pixels = -pixels;
-        }
-
-        await pageInstance.evaluate((scrollAmount) => {
-          window.scrollBy(0, scrollAmount);
-        }, pixels);
+        const deltaY = direction === 'up' ? -pixels : pixels;
+        await provider.scroll(0, deltaY);
 
         return NextResponse.json({
           success: true,
@@ -168,30 +162,21 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      case 'close': {
-        if (pageInstance && !pageInstance.isClosed()) {
-          await pageInstance.close();
-          pageInstance = null;
-        }
-        if (browserInstance && browserInstance.isConnected()) {
-          await browserInstance.close();
-          browserInstance = null;
-        }
-        return NextResponse.json({
-          success: true,
-          message: 'Browser closed',
-        });
-      }
-
       case 'get_text': {
-        if (!pageInstance || pageInstance.isClosed()) {
+        const { url } = params;
+
+        if (!url) {
           return NextResponse.json({
             success: false,
-            error: 'No browser page is open. Open a website first.',
-          });
+            error: 'URL is required for get_text action in serverless mode',
+          }, { status: 400 });
         }
+
+        await provider.connect();
+        await provider.navigateTo(normalizeUrl(url), { waitUntil: 'domcontentloaded', timeout: 30000 });
+
         // Get main content text
-        const text = await pageInstance.evaluate(() => {
+        const text = await provider.evaluate(() => {
           // Try to get main content first
           const main = document.querySelector('main, article, [role="main"]');
           if (main) {
@@ -201,32 +186,55 @@ export async function POST(request: NextRequest) {
           return document.body.textContent?.slice(0, 5000) || '';
         });
 
+        const title = await provider.evaluate(() => document.title);
+        const currentUrl = await provider.getCurrentUrl();
+
         return NextResponse.json({
           success: true,
-          text: text.replace(/\s+/g, ' ').trim(),
-          title: await pageInstance.title(),
-          url: pageInstance.url(),
+          text: (text as string).replace(/\s+/g, ' ').trim(),
+          title,
+          url: currentUrl,
+        });
+      }
+
+      case 'status': {
+        // Return browser provider status without connecting
+        const providerType = process.env.BROWSER_PROVIDER || 'local-cdp';
+        return NextResponse.json({
+          success: true,
+          provider: providerType,
+          browserbaseConfigured: !!process.env.BROWSERBASE_API_KEY,
+          message: `Browser provider: ${providerType}`,
         });
       }
 
       default:
         return NextResponse.json({
           success: false,
-          error: `Unknown action: ${action}`,
+          error: `Unknown action: ${action}. Available actions: open, screenshot, click, type, scroll, get_text, status`,
         }, { status: 400 });
     }
   } catch (error) {
     console.error('[Browser API] Error:', error);
+
+    const errorMessage = error instanceof BrowserProviderError
+      ? `${error.message} (${error.code})`
+      : error instanceof Error
+      ? error.message
+      : 'Browser operation failed';
+
     return NextResponse.json({
       success: false,
-      error: error instanceof Error ? error.message : 'Browser operation failed',
+      error: errorMessage,
     }, { status: 500 });
+  } finally {
+    // Always disconnect the provider to clean up resources
+    if (provider) {
+      try {
+        await provider.disconnect();
+      } catch (e) {
+        console.warn('[Browser API] Error disconnecting provider:', e);
+      }
+    }
   }
 }
-
-// Cleanup on server shutdown
-process.on('beforeExit', async () => {
-  if (browserInstance) {
-    await browserInstance.close();
-  }
-});
