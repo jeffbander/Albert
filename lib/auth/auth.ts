@@ -21,9 +21,12 @@ declare module 'next-auth' {
   }
 }
 
+// Only use database adapter if TURSO_DATABASE_URL is set (runtime only)
+const adapter = process.env.TURSO_DATABASE_URL ? DrizzleAdapter(db) : undefined;
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  // Use Drizzle adapter for database session storage
-  adapter: DrizzleAdapter(db),
+  // Use Drizzle adapter for database session storage (only at runtime)
+  adapter,
 
   // Configure OAuth providers (only include if credentials are available)
   providers: [
@@ -54,9 +57,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       : []),
   ],
 
-  // Use database sessions (not JWT)
+  // Use JWT sessions when no adapter, database sessions otherwise
   session: {
-    strategy: 'database',
+    strategy: adapter ? 'database' : 'jwt',
     // Session expires after 30 days
     maxAge: 30 * 24 * 60 * 60, // 30 days
     // Update session expiry every 24 hours
@@ -72,14 +75,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
   // Callbacks for customizing behavior
   callbacks: {
-    // Add user ID to the session
-    session: ({ session, user }) => ({
+    // Add user ID to the session (handles both JWT and database sessions)
+    session: ({ session, user, token }) => ({
       ...session,
       user: {
         ...session.user,
-        id: user.id,
+        id: user?.id || token?.sub || '',
       },
     }),
+    // For JWT sessions, add user id to token
+    jwt: ({ token, user }) => {
+      if (user) {
+        token.sub = user.id;
+      }
+      return token;
+    },
 
     // Control if a user is allowed to sign in
     signIn: async ({ user, account, profile }) => {
