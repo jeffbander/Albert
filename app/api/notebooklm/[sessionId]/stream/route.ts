@@ -4,6 +4,9 @@
  * Pattern follows build/[projectId]/stream/route.ts
  */
 
+// Force dynamic rendering to prevent build-time database connection
+export const dynamic = 'force-dynamic';
+
 import { NextRequest } from 'next/server';
 import { subscribeToResearchProgress, getResearchSession } from '@/lib/researchSessionStore';
 import type { ResearchProgressEvent } from '@/types/research';

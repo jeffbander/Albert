@@ -4,6 +4,9 @@
  * Uses browser automation to control NotebookLM with provider abstraction.
  */
 
+// Force dynamic rendering to prevent build-time database connection
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { createBrowserProvider, createBrowserProviderWithFallback, BrowserProviderError } from '@/lib/browser';
 import type { BrowserProviderConfig } from '@/lib/browser/types';
