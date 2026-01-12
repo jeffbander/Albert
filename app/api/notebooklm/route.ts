@@ -1,27 +1,69 @@
 /**
  * NotebookLM API Route
  * Handles research operations for the Albert voice assistant.
- * Uses browser automation to control NotebookLM in the user's Chrome.
+ * Uses browser automation to control NotebookLM with provider abstraction.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createBrowserProvider, createBrowserProviderWithFallback, BrowserProviderError } from '@/lib/browser';
+import type { BrowserProviderConfig } from '@/lib/browser/types';
+import { NotebookLMService } from '@/lib/notebooklm';
+import { getOptionalUser, UnauthorizedError } from '@/lib/auth/get-user';
 import {
-  createResearchSession,
   getActiveResearchSession,
   getResearchSession,
   updateSessionPhase,
-  setSessionTabId,
-  setSessionNotebookUrl,
   addSourceToSession,
   updateSourceStatus,
   recordQuestion,
-  recordAnswer,
   closeResearchSession,
 } from '@/lib/researchSessionStore';
-import * as controller from '@/lib/notebookLMController';
 
 // Track running operations to prevent concurrent modifications
 const runningOperations = new Set<string>();
+
+// Cache service instances by user (for session reuse)
+const serviceCache = new Map<string, NotebookLMService>();
+
+/**
+ * Get or create a NotebookLMService instance for a user
+ */
+async function getServiceForUser(userId: string): Promise<NotebookLMService> {
+  // Check cache first
+  const cached = serviceCache.get(userId);
+  if (cached) {
+    return cached;
+  }
+
+  // Create browser provider based on environment
+  const providerConfig: BrowserProviderConfig = {
+    type: (process.env.BROWSER_PROVIDER || 'local-cdp') as BrowserProviderConfig['type'],
+    debugPort: parseInt(process.env.CHROME_DEBUG_PORT || '9222', 10),
+    apiKey: process.env.BROWSERBASE_API_KEY,
+    projectId: process.env.BROWSERBASE_PROJECT_ID,
+    debug: process.env.BROWSER_DEBUG === 'true',
+  };
+
+  let browserProvider;
+  try {
+    // Try to create with fallback support
+    browserProvider = await createBrowserProviderWithFallback(
+      providerConfig.type === 'browserbase' // preferCloud
+    );
+  } catch {
+    // If fallback fails, try direct creation for better error messages
+    browserProvider = createBrowserProvider(providerConfig);
+  }
+
+  const service = new NotebookLMService(browserProvider, {
+    debug: process.env.NODE_ENV === 'development',
+  });
+
+  // Cache the service
+  serviceCache.set(userId, service);
+
+  return service;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,6 +71,11 @@ export async function POST(request: NextRequest) {
     const { action, ...params } = body;
 
     console.log(`[NotebookLM API] Action: ${action}`, params);
+
+    // Get optional user for user-scoped operations
+    // Note: For voice assistant, auth may be optional depending on deployment
+    const user = await getOptionalUser();
+    const userId = user?.id || 'anonymous';
 
     switch (action) {
       case 'start_research': {
@@ -42,7 +89,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Check if there's already an active session
-        const existing = getActiveResearchSession();
+        const existing = await getActiveResearchSession();
         if (existing && existing.phase !== 'complete' && existing.phase !== 'error') {
           return NextResponse.json({
             success: false,
@@ -51,26 +98,32 @@ export async function POST(request: NextRequest) {
           }, { status: 409 });
         }
 
-        // Create new session
-        const sessionId = createResearchSession(topic);
-        updateSessionPhase(sessionId, 'initializing', `Starting research on "${topic}"...`);
+        // Get or create service
+        const service = await getServiceForUser(userId);
 
         // Start the research process asynchronously
-        startResearchAsync(sessionId, topic, initialSources).catch(err => {
+        const sourcesArray = initialSources
+          ? initialSources.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+          : undefined;
+
+        // Start async operation
+        startResearchAsync(service, userId, topic, sourcesArray).catch(err => {
           console.error(`[NotebookLM API] Research failed:`, err);
-          updateSessionPhase(sessionId, 'error', err.message);
         });
+
+        // Get the session that was just created
+        const session = await getActiveResearchSession();
 
         return NextResponse.json({
           success: true,
-          sessionId,
+          sessionId: session?.id,
           message: `Starting research on "${topic}". I'll keep you updated on progress.`,
-          streamUrl: `/api/notebooklm/${sessionId}/stream`,
+          streamUrl: session ? `/api/notebooklm/${session.id}/stream` : null,
         });
       }
 
       case 'add_source': {
-        const session = getActiveResearchSession();
+        const session = await getActiveResearchSession();
         if (!session) {
           return NextResponse.json({
             success: false,
@@ -95,17 +148,18 @@ export async function POST(request: NextRequest) {
         }
 
         // Add source to session
-        const sourceId = addSourceToSession(session.id, {
+        const sourceId = await addSourceToSession(session.id, {
           type: sourceType,
           content,
           description,
         });
 
-        // Add source asynchronously
-        addSourceAsync(session.id, session.tabId!, sourceType, content, sourceId).catch(err => {
+        // Get service and add source asynchronously
+        const service = await getServiceForUser(userId);
+        addSourceAsync(service, session.id, sourceType, content, sourceId).catch(async err => {
           console.error(`[NotebookLM API] Add source failed:`, err);
-          updateSourceStatus(session.id, sourceId, 'failed');
-          updateSessionPhase(session.id, 'error', `Failed to add source: ${err.message}`);
+          await updateSourceStatus(session.id, sourceId, 'failed');
+          await updateSessionPhase(session.id, 'error', `Failed to add source: ${err.message}`);
         });
 
         return NextResponse.json({
@@ -116,7 +170,7 @@ export async function POST(request: NextRequest) {
       }
 
       case 'ask_notebook': {
-        const session = getActiveResearchSession();
+        const session = await getActiveResearchSession();
         if (!session) {
           return NextResponse.json({
             success: false,
@@ -141,13 +195,14 @@ export async function POST(request: NextRequest) {
         }
 
         // Record the question
-        const questionId = recordQuestion(session.id, question);
-        updateSessionPhase(session.id, 'querying', `Asking: ${question}`);
+        const questionId = await recordQuestion(session.id, question);
+        await updateSessionPhase(session.id, 'querying', `Asking: ${question}`);
 
-        // Ask asynchronously
-        askNotebookAsync(session.id, session.tabId!, question, questionId).catch(err => {
+        // Get service and ask asynchronously
+        const service = await getServiceForUser(userId);
+        askNotebookAsync(service, session.id, question, questionId).catch(async err => {
           console.error(`[NotebookLM API] Ask failed:`, err);
-          updateSessionPhase(session.id, 'error', `Failed to get answer: ${err.message}`);
+          await updateSessionPhase(session.id, 'error', `Failed to get answer: ${err.message}`);
         });
 
         return NextResponse.json({
@@ -158,7 +213,7 @@ export async function POST(request: NextRequest) {
       }
 
       case 'get_summary': {
-        const session = getActiveResearchSession();
+        const session = await getActiveResearchSession();
         if (!session) {
           return NextResponse.json({
             success: false,
@@ -178,12 +233,13 @@ export async function POST(request: NextRequest) {
           ? `Give me a focused summary on: ${params.focusArea}`
           : 'Give me a comprehensive overview of all the research material. Summarize the key findings and main points.';
 
-        const questionId = recordQuestion(session.id, overviewQuestion);
-        updateSessionPhase(session.id, 'querying', 'Generating summary...');
+        const questionId = await recordQuestion(session.id, overviewQuestion);
+        await updateSessionPhase(session.id, 'querying', 'Generating summary...');
 
-        askNotebookAsync(session.id, session.tabId!, overviewQuestion, questionId).catch(err => {
+        const service = await getServiceForUser(userId);
+        askNotebookAsync(service, session.id, overviewQuestion, questionId).catch(async err => {
           console.error(`[NotebookLM API] Summary failed:`, err);
-          updateSessionPhase(session.id, 'error', `Failed to get summary: ${err.message}`);
+          await updateSessionPhase(session.id, 'error', `Failed to get summary: ${err.message}`);
         });
 
         return NextResponse.json({
@@ -193,9 +249,12 @@ export async function POST(request: NextRequest) {
       }
 
       case 'close_research': {
-        const session = getActiveResearchSession();
+        const session = await getActiveResearchSession();
         if (session) {
-          closeResearchSession(session.id);
+          await closeResearchSession(session.id);
+
+          // Clean up service cache
+          serviceCache.delete(userId);
         }
 
         return NextResponse.json({
@@ -206,8 +265,8 @@ export async function POST(request: NextRequest) {
 
       case 'get_status': {
         const session = params.sessionId
-          ? getResearchSession(params.sessionId)
-          : getActiveResearchSession();
+          ? await getResearchSession(params.sessionId)
+          : await getActiveResearchSession();
 
         if (!session) {
           return NextResponse.json({
@@ -241,6 +300,34 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('[NotebookLM API] Error:', error);
+
+    // Handle specific error types
+    if (error instanceof UnauthorizedError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Authentication required for this operation',
+      }, { status: 401 });
+    }
+
+    if (error instanceof BrowserProviderError) {
+      // Provide helpful error messages for browser issues
+      let userMessage = error.message;
+
+      if (error.code === 'CONNECTION_FAILED') {
+        userMessage = 'Cannot connect to browser. Please start Chrome with debugging enabled: chrome.exe --remote-debugging-port=9222';
+      } else if (error.code === 'AUTHENTICATION_REQUIRED') {
+        userMessage = 'Browser provider authentication failed. Please check your API key configuration.';
+      } else if (error.code === 'PROVIDER_NOT_AVAILABLE') {
+        userMessage = 'Browser automation is not available. Please configure a browser provider.';
+      }
+
+      return NextResponse.json({
+        success: false,
+        error: userMessage,
+        errorCode: error.code,
+      }, { status: 500 });
+    }
+
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : 'Operation failed',
@@ -249,7 +336,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  const session = getActiveResearchSession();
+  const session = await getActiveResearchSession();
 
   return NextResponse.json({
     status: 'ok',
@@ -260,6 +347,7 @@ export async function GET() {
       topic: session.topic,
       phase: session.phase,
     } : null,
+    browserProvider: process.env.BROWSER_PROVIDER || 'local-cdp',
   });
 }
 
@@ -267,11 +355,12 @@ export async function GET() {
  * Start research asynchronously
  */
 async function startResearchAsync(
-  sessionId: string,
+  service: NotebookLMService,
+  userId: string,
   topic: string,
-  initialSources?: string
+  initialSources?: string[]
 ): Promise<void> {
-  const operationKey = `start:${sessionId}`;
+  const operationKey = `start:${userId}:${topic}`;
 
   if (runningOperations.has(operationKey)) {
     throw new Error('Research is already starting');
@@ -280,87 +369,24 @@ async function startResearchAsync(
   runningOperations.add(operationKey);
 
   try {
-    // Initialize browser
-    updateSessionPhase(sessionId, 'creating_notebook', 'Connecting to Chrome...');
-
-    let tabId: number;
-    let isNew: boolean;
-
-    try {
-      const result = await controller.initializeBrowser();
-      tabId = result.tabId;
-      isNew = result.isNew;
-    } catch (browserError) {
-      const errorMsg = browserError instanceof Error ? browserError.message : 'Browser connection failed';
+    await service.startResearch(userId, topic, initialSources);
+  } catch (error) {
+    const session = await getActiveResearchSession();
+    if (session) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
 
       // Provide helpful instructions for CDP connection issues
-      if (errorMsg.includes('Failed to connect') || errorMsg.includes('ECONNREFUSED')) {
-        updateSessionPhase(
-          sessionId,
+      if (error instanceof BrowserProviderError && error.code === 'CONNECTION_FAILED') {
+        await updateSessionPhase(
+          session.id,
           'error',
           'Cannot connect to Chrome. Please restart Chrome with debugging enabled: Close Chrome completely, then run: chrome.exe --remote-debugging-port=9222'
         );
-        return;
-      }
-
-      throw browserError;
-    }
-
-    setSessionTabId(sessionId, tabId);
-    updateSessionPhase(sessionId, 'creating_notebook', 'Opening NotebookLM...');
-
-    // Navigate to NotebookLM if needed
-    if (isNew) {
-      await controller.navigateToNotebookLM(tabId);
-    }
-
-    // Check if logged in
-    const isLoggedIn = await controller.checkLoginStatus(tabId);
-    if (!isLoggedIn) {
-      updateSessionPhase(
-        sessionId,
-        'error',
-        'Not logged into NotebookLM. Please log in to your Google account in Chrome and try again.'
-      );
-      return;
-    }
-
-    // Create new notebook
-    updateSessionPhase(sessionId, 'creating_notebook', `Creating notebook: "Research: ${topic}"...`);
-    const notebookUrl = await controller.createNewNotebook(tabId, `Research: ${topic}`);
-    setSessionNotebookUrl(sessionId, notebookUrl);
-
-    // Add initial sources if provided
-    if (initialSources) {
-      updateSessionPhase(sessionId, 'adding_sources', 'Adding initial sources...');
-
-      const sources = initialSources.split(',').map(s => s.trim()).filter(s => s.length > 0);
-
-      for (const source of sources) {
-        try {
-          const sourceType = getSourceType(source);
-          const sourceId = addSourceToSession(sessionId, {
-            type: sourceType,
-            content: source,
-          });
-
-          await controller.addSourceToNotebook(tabId, sourceType, source);
-          updateSourceStatus(sessionId, sourceId, 'added');
-
-        } catch (err) {
-          console.error(`[NotebookLM] Failed to add source ${source}:`, err);
-          // Continue with other sources
-        }
+      } else {
+        await updateSessionPhase(session.id, 'error', message);
       }
     }
-
-    // Mark as ready
-    updateSessionPhase(
-      sessionId,
-      'ready',
-      `Research notebook is ready! ${initialSources ? `Added ${initialSources.split(',').length} sources. ` : ''}You can ask questions or add more sources.`
-    );
-
+    throw error;
   } finally {
     runningOperations.delete(operationKey);
   }
@@ -370,8 +396,8 @@ async function startResearchAsync(
  * Add source asynchronously
  */
 async function addSourceAsync(
+  service: NotebookLMService,
   sessionId: string,
-  tabId: number,
   sourceType: string,
   content: string,
   sourceId: string
@@ -385,17 +411,10 @@ async function addSourceAsync(
   runningOperations.add(operationKey);
 
   try {
-    updateSessionPhase(sessionId, 'adding_sources', `Adding ${sourceType}...`);
-
-    await controller.addSourceToNotebook(
-      tabId,
-      sourceType as 'url' | 'youtube' | 'google_doc' | 'text',
-      content
-    );
-
-    updateSourceStatus(sessionId, sourceId, 'added');
-    updateSessionPhase(sessionId, 'ready', 'Source added successfully! Processing complete.');
-
+    await service.addSource(sessionId, {
+      type: sourceType as 'url' | 'youtube' | 'google_doc' | 'text',
+      content,
+    });
   } finally {
     runningOperations.delete(operationKey);
   }
@@ -405,8 +424,8 @@ async function addSourceAsync(
  * Ask notebook question asynchronously
  */
 async function askNotebookAsync(
+  service: NotebookLMService,
   sessionId: string,
-  tabId: number,
   question: string,
   questionId: string
 ): Promise<void> {
@@ -419,30 +438,9 @@ async function askNotebookAsync(
   runningOperations.add(operationKey);
 
   try {
-    const answer = await controller.askNotebookQuestion(tabId, question);
-
-    recordAnswer(sessionId, questionId, answer);
-
-    // Emit the answer via progress event
-    updateSessionPhase(sessionId, 'ready', answer, answer);
-
+    // The service handles recording the answer internally
+    await service.askQuestion(sessionId, question);
   } finally {
     runningOperations.delete(operationKey);
   }
-}
-
-/**
- * Determine source type from content
- */
-function getSourceType(source: string): 'url' | 'youtube' | 'google_doc' | 'text' {
-  if (source.includes('youtube.com') || source.includes('youtu.be')) {
-    return 'youtube';
-  }
-  if (source.includes('docs.google.com')) {
-    return 'google_doc';
-  }
-  if (source.startsWith('http://') || source.startsWith('https://')) {
-    return 'url';
-  }
-  return 'text';
 }

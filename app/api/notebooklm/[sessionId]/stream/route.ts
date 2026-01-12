@@ -19,7 +19,7 @@ export async function GET(
   }
 
   // Check if session exists
-  const session = getResearchSession(sessionId);
+  const session = await getResearchSession(sessionId);
   if (!session) {
     return new Response('Session not found', { status: 404 });
   }

@@ -15,7 +15,7 @@ export type ResearchPhase =
 
 export interface ResearchSource {
   id: string;
-  type: 'url' | 'youtube' | 'google_doc' | 'text';
+  type: 'url' | 'youtube' | 'google_doc' | 'text' | 'pdf';
   content: string;
   description?: string;
   addedAt: Date;
@@ -30,9 +30,13 @@ export interface ResearchQuestion {
   answeredAt?: Date;
 }
 
+export type ResearchSessionStatus = 'active' | 'paused' | 'closed';
+
 export interface ResearchSession {
   id: string;
+  userId: string;  // User who owns this session
   topic: string;
+  status: ResearchSessionStatus;  // Session status for persistence
   notebookUrl?: string;
   phase: ResearchPhase;
   sources: ResearchSource[];

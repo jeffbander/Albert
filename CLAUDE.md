@@ -121,20 +121,27 @@ Albert has access to these voice-activated tools:
 
 ## Environment Variables
 
-```env
-# OpenAI
-OPENAI_API_KEY=
+See `.env.example` for a complete list of environment variables.
 
-# Anthropic
-ANTHROPIC_API_KEY=
+### Required Variables
 
-# Database
-TURSO_DATABASE_URL=
-TURSO_AUTH_TOKEN=
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key for GPT-4o Realtime voice |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
 
-# Chrome (for NotebookLM)
-CHROME_DEBUG_PORT=9222
-```
+### Optional Variables
+
+| Variable | Description |
+|----------|-------------|
+| `TURSO_DATABASE_URL` | Turso/LibSQL database URL |
+| `TURSO_AUTH_TOKEN` | Turso authentication token |
+| `BROWSER_PROVIDER` | `local-cdp` (dev) or `browserbase` (prod) |
+| `CHROME_DEBUG_PORT` | Chrome debugging port (default: 9222) |
+| `BROWSERBASE_API_KEY` | Browserbase API key (for production) |
+| `BROWSERBASE_PROJECT_ID` | Browserbase project ID |
+| `NEXTAUTH_SECRET` | NextAuth.js secret key |
+| `GMAIL_ENABLED` | Enable Gmail integration |
 
 ## Running the Project
 
@@ -147,6 +154,167 @@ npm run dev
 
 # Build for production
 npm run build
+```
+
+## Deployment
+
+### Local Development Setup
+
+1. **Clone and install dependencies:**
+   ```bash
+   git clone <repository-url>
+   cd Albert
+   npm install
+   ```
+
+2. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your API keys
+   ```
+
+3. **Start Chrome with debugging (for browser automation):**
+   ```bash
+   # Windows
+   scripts\launch-chrome-debug.bat
+
+   # macOS
+   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+   # Linux
+   google-chrome --remote-debugging-port=9222
+   ```
+
+4. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
+
+5. **Access the application:**
+   Open [http://localhost:3000](http://localhost:3000)
+
+### Browserbase Setup (Production Browser Automation)
+
+For production deployments, use [Browserbase](https://browserbase.com) instead of local Chrome:
+
+1. **Create a Browserbase account** at https://browserbase.com
+
+2. **Get your credentials:**
+   - API Key from the dashboard
+   - Project ID from your project settings
+
+3. **Configure environment variables:**
+   ```env
+   BROWSER_PROVIDER=browserbase
+   BROWSERBASE_API_KEY=your-api-key
+   BROWSERBASE_PROJECT_ID=your-project-id
+   ```
+
+4. **Use the config helper in your code:**
+   ```typescript
+   import { config, getBrowserConnectionUrl } from '@/lib/config';
+
+   const browserUrl = getBrowserConnectionUrl();
+   // Automatically uses Browserbase in production, local CDP in development
+   ```
+
+### Vercel Deployment
+
+1. **Connect your repository:**
+   - Go to [vercel.com](https://vercel.com)
+   - Import your GitHub repository
+   - Select the Next.js framework preset
+
+2. **Configure environment variables:**
+   In Vercel dashboard, add the following environment variables:
+
+   **Required:**
+   - `OPENAI_API_KEY`
+   - `ANTHROPIC_API_KEY`
+   - `NEXTAUTH_SECRET` (generate with `openssl rand -base64 32`)
+   - `NEXTAUTH_URL` (your production URL, e.g., `https://albert.vercel.app`)
+
+   **Database:**
+   - `TURSO_DATABASE_URL`
+   - `TURSO_AUTH_TOKEN`
+
+   **Browser Automation (if using):**
+   - `BROWSER_PROVIDER=browserbase`
+   - `BROWSERBASE_API_KEY`
+   - `BROWSERBASE_PROJECT_ID`
+
+   **Optional:**
+   - `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` (for Gmail integration)
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (for Google OAuth)
+
+3. **Deploy:**
+   ```bash
+   vercel --prod
+   ```
+
+4. **Verify deployment:**
+   - Check the deployment logs for any errors
+   - Test voice functionality
+   - Verify browser automation if enabled
+
+### Docker Deployment (Alternative)
+
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+### Configuration Validation
+
+The application includes built-in configuration validation. Use it to verify your setup:
+
+```typescript
+import { validateConfig, getValidationResult } from '@/lib/config';
+
+// Throws an error if required variables are missing
+validateConfig();
+
+// Or get detailed validation results
+const result = getValidationResult();
+if (!result.valid) {
+  console.error('Missing:', result.missing);
+}
+if (result.warnings.length > 0) {
+  console.warn('Warnings:', result.warnings);
+}
+```
+
+### Feature Flags
+
+Check if features are available based on configuration:
+
+```typescript
+import { features } from '@/lib/config';
+
+if (features.gmail()) {
+  // Gmail integration is configured
+}
+
+if (features.browserAutomation()) {
+  // Browser automation is available
+}
+
+if (features.database()) {
+  // Database is configured
+}
 ```
 
 ## MCP Servers

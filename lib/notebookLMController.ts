@@ -1,7 +1,26 @@
 /**
- * NotebookLM Browser Controller
- * Automates NotebookLM operations using Playwright connected via CDP.
- * Connects to the user's existing Chrome browser for seamless integration.
+ * NotebookLM Browser Controller (Legacy)
+ *
+ * @deprecated This module uses direct Playwright CDP connections.
+ * For new code, prefer using the NotebookLMService from '@/lib/notebooklm'
+ * which uses the BrowserProvider abstraction layer for better flexibility.
+ *
+ * Example migration:
+ * ```typescript
+ * // OLD:
+ * import * as controller from '@/lib/notebookLMController';
+ * await controller.initializeBrowser();
+ *
+ * // NEW:
+ * import { createBrowserProvider } from '@/lib/browser';
+ * import { NotebookLMService } from '@/lib/notebooklm';
+ *
+ * const browserProvider = createBrowserProvider({ type: 'local-cdp' });
+ * const service = new NotebookLMService(browserProvider);
+ * await service.startResearch('user123', 'My Research Topic');
+ * ```
+ *
+ * This file is kept for backward compatibility with existing code.
  */
 
 import { chromium, Browser, Page, BrowserContext } from 'playwright';
@@ -23,6 +42,7 @@ interface TabInfo {
 
 /**
  * Connect to existing Chrome browser via CDP
+ * @deprecated Use createBrowserProvider({ type: 'local-cdp' }) instead
  */
 async function connectToBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.isConnected()) {
@@ -47,6 +67,7 @@ async function connectToBrowser(): Promise<Browser> {
 
 /**
  * Get or create a browser context
+ * @deprecated Use BrowserProvider abstraction instead
  */
 async function getContext(): Promise<BrowserContext> {
   if (contextInstance) {
@@ -67,8 +88,9 @@ async function getContext(): Promise<BrowserContext> {
 
 /**
  * Get all available tabs
+ * @deprecated Use BrowserProvider abstraction instead
  */
-async function getAvailableTabs(): Promise<TabInfo[]> {
+export async function getAvailableTabs(): Promise<TabInfo[]> {
   const context = await getContext();
   const pages = context.pages();
 
@@ -82,6 +104,7 @@ async function getAvailableTabs(): Promise<TabInfo[]> {
 
 /**
  * Initialize browser and get or create a tab for NotebookLM
+ * @deprecated Use NotebookLMService.startResearch() instead
  */
 export async function initializeBrowser(): Promise<{ tabId: number; isNew: boolean }> {
   const context = await getContext();
@@ -106,6 +129,7 @@ export async function initializeBrowser(): Promise<{ tabId: number; isNew: boole
 
 /**
  * Get page by tab index
+ * @deprecated Use BrowserProvider abstraction instead
  */
 async function getPage(tabIndex: number): Promise<Page> {
   const context = await getContext();
@@ -120,6 +144,7 @@ async function getPage(tabIndex: number): Promise<Page> {
 
 /**
  * Navigate to NotebookLM
+ * @deprecated Use NotebookLMService instead
  */
 export async function navigateToNotebookLM(tabId: number): Promise<void> {
   const page = await getPage(tabId);
@@ -137,6 +162,7 @@ export async function navigateToNotebookLM(tabId: number): Promise<void> {
 
 /**
  * Create a new notebook with a title
+ * @deprecated Use NotebookLMService.startResearch() instead
  */
 export async function createNewNotebook(tabId: number, title: string): Promise<string> {
   const page = await getPage(tabId);
@@ -189,6 +215,7 @@ export async function createNewNotebook(tabId: number, title: string): Promise<s
 
 /**
  * Add a source to the current notebook
+ * @deprecated Use NotebookLMService.addSource() instead
  */
 export async function addSourceToNotebook(
   tabId: number,
@@ -261,6 +288,7 @@ export async function addSourceToNotebook(
 
 /**
  * Ask NotebookLM a question and get the response
+ * @deprecated Use NotebookLMService.askQuestion() instead
  */
 export async function askNotebookQuestion(tabId: number, question: string): Promise<string> {
   const page = await getPage(tabId);
@@ -339,6 +367,7 @@ export async function askNotebookQuestion(tabId: number, question: string): Prom
 
 /**
  * Take a screenshot of the current page
+ * @deprecated Use NotebookLMService.takeScreenshot() instead
  */
 export async function takeScreenshot(tabId: number): Promise<string | null> {
   try {
@@ -353,6 +382,7 @@ export async function takeScreenshot(tabId: number): Promise<string | null> {
 
 /**
  * Check if user is logged into NotebookLM
+ * @deprecated Use NotebookLMService instead
  */
 export async function checkLoginStatus(tabId: number): Promise<boolean> {
   try {
@@ -388,6 +418,7 @@ export async function checkLoginStatus(tabId: number): Promise<boolean> {
 
 /**
  * Close the browser connection (cleanup)
+ * @deprecated Use BrowserProvider.disconnect() instead
  */
 export async function closeBrowserConnection(): Promise<void> {
   if (browserInstance) {
@@ -400,6 +431,7 @@ export async function closeBrowserConnection(): Promise<void> {
 
 /**
  * Get the current page URL
+ * @deprecated Use BrowserProvider.getCurrentUrl() instead
  */
 export async function getCurrentUrl(tabId: number): Promise<string> {
   const page = await getPage(tabId);
@@ -408,6 +440,7 @@ export async function getCurrentUrl(tabId: number): Promise<string> {
 
 /**
  * Scroll the page
+ * @deprecated Use BrowserProvider.scroll() instead
  */
 export async function scrollPage(tabId: number, direction: 'up' | 'down'): Promise<void> {
   const page = await getPage(tabId);

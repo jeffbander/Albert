@@ -154,6 +154,82 @@ export interface PendingReflection {
 export async function initDatabase() {
   const db = getDb();
 
+  // ============================================
+  // NextAuth.js Authentication Tables
+  // ============================================
+
+  // Users table - stores basic user information
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      email TEXT UNIQUE,
+      email_verified INTEGER,
+      image TEXT,
+      created_at INTEGER DEFAULT (unixepoch() * 1000),
+      updated_at INTEGER DEFAULT (unixepoch() * 1000)
+    )
+  `);
+
+  // Accounts table - stores OAuth provider account information
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_account_id TEXT NOT NULL,
+      refresh_token TEXT,
+      access_token TEXT,
+      expires_at INTEGER,
+      token_type TEXT,
+      scope TEXT,
+      id_token TEXT,
+      session_state TEXT,
+      PRIMARY KEY (provider, provider_account_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Sessions table - stores active user sessions
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      session_token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Verification tokens table - stores email verification tokens
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS verification_tokens (
+      identifier TEXT NOT NULL,
+      token TEXT NOT NULL,
+      expires INTEGER NOT NULL,
+      PRIMARY KEY (identifier, token)
+    )
+  `);
+
+  // Authenticators table - stores WebAuthn authenticators (optional)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS authenticators (
+      credential_id TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      provider_account_id TEXT NOT NULL,
+      credential_public_key TEXT NOT NULL,
+      counter INTEGER NOT NULL,
+      credential_device_type TEXT NOT NULL,
+      credential_backed_up INTEGER NOT NULL,
+      transports TEXT,
+      PRIMARY KEY (user_id, credential_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ============================================
+  // Core Application Tables
+  // ============================================
+
   // Core conversation tracking
   await db.execute(`
     CREATE TABLE IF NOT EXISTS conversations (
@@ -462,6 +538,91 @@ export async function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       expires_at DATETIME DEFAULT (datetime('now', '+10 minutes'))
     )
+  `);
+
+  // Research sessions for NotebookLM integration
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS research_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'paused', 'closed')),
+      phase TEXT DEFAULT 'initializing',
+      notebook_url TEXT,
+      tab_id INTEGER,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Create index for faster user session lookups
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_research_sessions_user_id ON research_sessions(user_id)
+  `);
+
+  // Create index for active sessions lookup
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_research_sessions_status ON research_sessions(status)
+  `);
+
+  // Research sources added to sessions
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS research_sources (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('url', 'youtube', 'google_doc', 'text', 'pdf')),
+      content TEXT NOT NULL,
+      description TEXT,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'added', 'failed')),
+      added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (session_id) REFERENCES research_sessions(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Create index for session sources lookup
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_research_sources_session_id ON research_sources(session_id)
+  `);
+
+  // Research questions asked during sessions
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS research_questions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT,
+      asked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      answered_at DATETIME,
+      FOREIGN KEY (session_id) REFERENCES research_sessions(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Create index for session questions lookup
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_research_questions_session_id ON research_questions(session_id)
+  `);
+
+  // OAuth tokens for Gmail and other integrations
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL CHECK(provider IN ('gmail', 'google', 'other')),
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      scope TEXT NOT NULL,
+      email TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, provider)
+    )
+  `);
+
+  // Create index for OAuth token lookup
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider)
   `);
 }
 
@@ -2151,6 +2312,148 @@ export async function cleanupExpiredEmails(): Promise<number> {
     WHERE status = 'pending' AND datetime(expires_at) < datetime('now')
   `);
   return result.rowsAffected;
+}
+
+// ============================================
+// OAuth Token Functions (Gmail, etc.)
+// ============================================
+
+export interface OAuthToken {
+  id: string;
+  userId: string;
+  provider: 'gmail' | 'google' | 'other';
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+  scope: string;
+  email: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export async function saveOAuthToken(
+  userId: string,
+  provider: OAuthToken['provider'],
+  accessToken: string,
+  refreshToken: string,
+  expiresAt: Date,
+  scope: string,
+  email?: string
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  // Upsert: update if exists for this user+provider, otherwise insert
+  await db.execute({
+    sql: `INSERT INTO oauth_tokens (id, user_id, provider, access_token, refresh_token, expires_at, scope, email)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(user_id, provider) DO UPDATE SET
+            access_token = excluded.access_token,
+            refresh_token = COALESCE(excluded.refresh_token, oauth_tokens.refresh_token),
+            expires_at = excluded.expires_at,
+            scope = excluded.scope,
+            email = COALESCE(excluded.email, oauth_tokens.email),
+            updated_at = CURRENT_TIMESTAMP`,
+    args: [id, userId, provider, accessToken, refreshToken, expiresAt.toISOString(), scope, email || null],
+  });
+  return id;
+}
+
+export async function getOAuthToken(
+  userId: string,
+  provider: OAuthToken['provider']
+): Promise<OAuthToken | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+    args: [userId, provider],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    provider: row.provider as OAuthToken['provider'],
+    accessToken: row.access_token as string,
+    refreshToken: row.refresh_token as string,
+    expiresAt: new Date(row.expires_at as string),
+    scope: row.scope as string,
+    email: row.email as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function updateOAuthTokenAccess(
+  userId: string,
+  provider: OAuthToken['provider'],
+  accessToken: string,
+  expiresAt: Date,
+  refreshToken?: string
+): Promise<void> {
+  const db = getDb();
+  if (refreshToken) {
+    await db.execute({
+      sql: `UPDATE oauth_tokens
+            SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND provider = ?`,
+      args: [accessToken, refreshToken, expiresAt.toISOString(), userId, provider],
+    });
+  } else {
+    await db.execute({
+      sql: `UPDATE oauth_tokens
+            SET access_token = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND provider = ?`,
+      args: [accessToken, expiresAt.toISOString(), userId, provider],
+    });
+  }
+}
+
+export async function deleteOAuthToken(
+  userId: string,
+  provider: OAuthToken['provider']
+): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+    args: [userId, provider],
+  });
+}
+
+export async function getOAuthTokenByProvider(
+  provider: OAuthToken['provider']
+): Promise<OAuthToken | null> {
+  // Get the default/first token for this provider (for single-user setups)
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM oauth_tokens WHERE provider = ? ORDER BY updated_at DESC LIMIT 1',
+    args: [provider],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    provider: row.provider as OAuthToken['provider'],
+    accessToken: row.access_token as string,
+    refreshToken: row.refresh_token as string,
+    expiresAt: new Date(row.expires_at as string),
+    scope: row.scope as string,
+    email: row.email as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function isOAuthTokenExpired(
+  userId: string,
+  provider: OAuthToken['provider']
+): Promise<boolean> {
+  const token = await getOAuthToken(userId, provider);
+  if (!token) return true;
+  // Consider expired if less than 5 minutes remaining
+  const bufferMs = 5 * 60 * 1000;
+  return token.expiresAt.getTime() - bufferMs < Date.now();
 }
 
 export default getDb;
