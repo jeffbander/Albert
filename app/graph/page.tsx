@@ -65,10 +65,19 @@ export default function KnowledgeGraphPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [filter, setFilter] = useState<string>('memory');
+  const [filter, setFilter] = useState<string>('all');
+  const [canvasReady, setCanvasReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<GraphNode[]>([]);
   const animationRef = useRef<number | undefined>(undefined);
+
+  // Callback ref to detect when canvas is mounted
+  const canvasCallbackRef = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (canvas) {
+      canvasRef.current = canvas;
+      setCanvasReady(true);
+    }
+  }, []);
 
   useEffect(() => {
     fetchGraphData();
@@ -281,7 +290,7 @@ export default function KnowledgeGraphPage() {
   }, [data, filter, selectedNode, simulate]);
 
   useEffect(() => {
-    if (data) {
+    if (data && canvasReady) {
       draw();
     }
     return () => {
@@ -289,7 +298,7 @@ export default function KnowledgeGraphPage() {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [data, draw]);
+  }, [data, draw, canvasReady]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -456,7 +465,7 @@ export default function KnowledgeGraphPage() {
         {/* Graph Canvas */}
         <div className="lg:col-span-2 bg-gray-800 rounded-xl p-4">
           <canvas
-            ref={canvasRef}
+            ref={canvasCallbackRef}
             width={800}
             height={600}
             onClick={handleCanvasClick}
