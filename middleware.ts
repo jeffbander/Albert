@@ -26,17 +26,12 @@ export default auth((req) => {
   return NextResponse.next();
 });
 
-// Configure which routes to protect
+// Configure which routes to protect with NextAuth
+// Routes NOT listed here use PasscodeGate client-side authentication instead
 export const config = {
   matcher: [
-    // Protect NotebookLM research routes
-    '/api/notebooklm/:path*',
-
-    // Protect Gmail integration routes
+    // Protect Gmail integration routes (OAuth flows)
     '/api/gmail/:path*',
-
-    // Protect browser automation routes
-    '/api/browser/:path*',
 
     // Protect build/deployment routes
     '/api/build/:path*',
@@ -44,17 +39,17 @@ export const config = {
     // Protect self-improvement routes
     '/api/self-improve/:path*',
 
-    // Protect memory routes
-    '/api/memory/:path*',
-
-    // Note: /api/conversation/* routes use PasscodeGate client-side auth instead
-
     // Protect codebase routes
     '/api/codebase/:path*',
 
-    // Note: /api/speakers/* routes use PasscodeGate client-side auth instead
-
-    // Note: /api/auth/* routes are NOT protected (NextAuth handles its own auth)
-    // Note: /api/realtime/* routes can be protected if needed
+    // The following routes use PasscodeGate client-side auth:
+    // - /api/browser/* (voice tool browser control)
+    // - /api/notebooklm/* (voice tool research)
+    // - /api/memory/* (voice tool memory)
+    // - /api/conversation/* (voice conversations)
+    // - /api/speakers/* (speaker profiles)
+    // - /api/graph/* (knowledge graph)
+    // - /api/realtime/* (voice sessions)
+    // - /api/auth/* (NextAuth handles its own auth)
   ],
 };
