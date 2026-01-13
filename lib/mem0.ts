@@ -728,7 +728,7 @@ export async function upsertFact(update: FactUpdate): Promise<{ memoryId: string
   const result = await addMemory(update.content, metadata);
 
   // Extract the new memory ID from result if available
-  const memoryId = (result as Record<string, unknown>)?.id as string || 'unknown';
+  const memoryId = (result as unknown as Record<string, unknown>)?.id as string || 'unknown';
 
   log('info', 'Fact upserted successfully', {
     newId: memoryId,
@@ -1153,7 +1153,7 @@ export async function runMemoryMaintenance(
       result.consolidated = similarGroups.reduce((sum, g) => sum + g.duplicates.length, 0);
     }
 
-    log('info', 'Memory maintenance completed', result);
+    log('info', 'Memory maintenance completed', { ...result });
   } catch (e) {
     result.errors.push(`Maintenance failed: ${e}`);
     log('error', 'Memory maintenance failed', { error: String(e) });
