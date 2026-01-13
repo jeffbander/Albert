@@ -11,7 +11,7 @@ import {
   createSkill,
   getSkillBySlug,
 } from '@/lib/db';
-import type { CreateSkillInput, SkillApiResponse, ListSkillsResponse } from '@/types/skill';
+import type { CreateSkillInput, SkillApiResponse, ListSkillsResponse, SkillParameter } from '@/types/skill';
 
 /**
  * GET /api/skills - List all skills
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
         name: string;
         description?: string;
         toolName: string;
-        parameterMapping?: Record<string, unknown>;
+        parameterMapping?: Record<string, SkillParameter>;
         outputKey: string;
         condition?: string;
         onSuccess?: string;
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
         name: step.name,
         description: step.description,
         toolName: step.toolName,
-        parameterMapping: step.parameterMapping || {},
+        parameterMapping: (step.parameterMapping || {}) as Record<string, SkillParameter>,
         outputKey: step.outputKey,
         condition: step.condition,
         onSuccess: step.onSuccess,

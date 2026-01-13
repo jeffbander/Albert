@@ -247,7 +247,7 @@ function resolveParameter(param: SkillParameter, context: ExecutionContext): unk
       return getNestedValue(context.results, param.value);
 
     case 'context':
-      return getNestedValue(context, param.value);
+      return getNestedValue(context as unknown as Record<string, unknown>, param.value);
 
     default:
       return param.value;
