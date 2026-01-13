@@ -9,7 +9,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "mcp:memory": "npx tsx lib/mcp/memoryServer.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,7 @@
     "@anthropic-ai/claude-code": "^2.0.76",
     "@auth/drizzle-adapter": "^1.7.4",
     "@libsql/client": "^0.15.15",
+    "@modelcontextprotocol/sdk": "^1.25.2",
     "@picovoice/eagle-web": "^1.0.0",
     "@picovoice/web-voice-processor": "^4.0.9",
     "@types/node": "^22.19.5",
@@ -38,5 +40,8 @@
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.18",
     "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
   }
 }

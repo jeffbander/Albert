@@ -311,3 +311,117 @@ export function parseResearchQuestionRow(row: Record<string, unknown>): DbResear
     answeredAt: row.answered_at ? new Date(row.answered_at as string) : null,
   };
 }
+
+// ============================================
+// Task Memory Schema Types
+// ============================================
+
+export type TaskType = 'research' | 'build' | 'browser' | 'general' | 'notebooklm';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'blocked' | 'cancelled';
+
+/**
+ * Task Memory - tracks tasks across sessions for resumption
+ */
+export interface TaskMemory {
+  id: string;
+  conversationId?: string;
+  userId: string;
+  taskDescription: string;
+  taskType?: TaskType;
+  status: TaskStatus;
+  priority: number;
+  subtasks?: string[];
+  completedSubtasks?: string[];
+  blockers?: string[];
+  context?: string;
+  toolsUsed?: string[];
+  errorMessage?: string;
+  startedAt: Date;
+  updatedAt: Date;
+  completedAt?: Date;
+  parentTaskId?: string;
+}
+
+export interface CreateTaskInput {
+  taskDescription: string;
+  taskType?: TaskType;
+  conversationId?: string;
+  userId?: string;
+  subtasks?: string[];
+  priority?: number;
+  parentTaskId?: string;
+}
+
+export interface UpdateTaskInput {
+  status?: TaskStatus;
+  subtasks?: string[];
+  completedSubtasks?: string[];
+  blockers?: string[];
+  context?: string;
+  toolsUsed?: string[];
+  errorMessage?: string;
+}
+
+/**
+ * Parse a database row into a TaskMemory object
+ */
+export function parseTaskMemoryRow(row: Record<string, unknown>): TaskMemory {
+  return {
+    id: row.id as string,
+    conversationId: row.conversation_id as string | undefined,
+    userId: row.user_id as string,
+    taskDescription: row.task_description as string,
+    taskType: row.task_type as TaskType | undefined,
+    status: row.status as TaskStatus,
+    priority: (row.priority as number) || 0,
+    subtasks: row.subtasks ? JSON.parse(row.subtasks as string) : undefined,
+    completedSubtasks: row.completed_subtasks ? JSON.parse(row.completed_subtasks as string) : undefined,
+    blockers: row.blockers ? JSON.parse(row.blockers as string) : undefined,
+    context: row.context as string | undefined,
+    toolsUsed: row.tools_used ? JSON.parse(row.tools_used as string) : undefined,
+    errorMessage: row.error_message as string | undefined,
+    startedAt: new Date(row.started_at as string),
+    updatedAt: new Date(row.updated_at as string),
+    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+    parentTaskId: row.parent_task_id as string | undefined,
+  };
+}
+
+// ============================================
+// Memory Effectiveness Schema Types
+// ============================================
+
+export interface MemoryEffectiveness {
+  memoryId: string;
+  timesRetrieved: number;
+  timesHelpful: number;
+  timesUnhelpful: number;
+  effectivenessScore: number;
+  lastUsed?: Date;
+  lastFeedback?: string;
+}
+
+export interface MemoryUsageFeedback {
+  id: string;
+  conversationId?: string;
+  memoryIds: string[];
+  responseRating?: 'positive' | 'negative' | 'neutral';
+  taskCompleted: boolean;
+  feedbackText?: string;
+  createdAt: Date;
+}
+
+/**
+ * Parse a database row into a MemoryEffectiveness object
+ */
+export function parseMemoryEffectivenessRow(row: Record<string, unknown>): MemoryEffectiveness {
+  return {
+    memoryId: row.memory_id as string,
+    timesRetrieved: (row.times_retrieved as number) || 0,
+    timesHelpful: (row.times_helpful as number) || 0,
+    timesUnhelpful: (row.times_unhelpful as number) || 0,
+    effectivenessScore: (row.effectiveness_score as number) || 0.5,
+    lastUsed: row.last_used ? new Date(row.last_used as string) : undefined,
+    lastFeedback: row.last_feedback as string | undefined,
+  };
+}
