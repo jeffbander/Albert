@@ -53,39 +53,47 @@ export interface AppConfig {
 }
 
 /**
+ * Helper to trim environment variable values
+ * Vercel CLI sometimes adds trailing newlines to env vars
+ */
+const trimEnv = (key: string): string | undefined => {
+  return process.env[key]?.trim() || undefined;
+};
+
+/**
  * Centralized configuration object
  * Access environment variables through this object for type safety
  */
 export const config: AppConfig = {
   browser: {
-    provider: (process.env.BROWSER_PROVIDER as BrowserProvider) || 'local-cdp',
-    cdpPort: process.env.CHROME_DEBUG_PORT || '9222',
-    browserbaseApiKey: process.env.BROWSERBASE_API_KEY,
-    browserbaseProjectId: process.env.BROWSERBASE_PROJECT_ID,
+    provider: (trimEnv('BROWSER_PROVIDER') as BrowserProvider) || 'local-cdp',
+    cdpPort: trimEnv('CHROME_DEBUG_PORT') || '9222',
+    browserbaseApiKey: trimEnv('BROWSERBASE_API_KEY'),
+    browserbaseProjectId: trimEnv('BROWSERBASE_PROJECT_ID'),
   },
   auth: {
-    secret: process.env.NEXTAUTH_SECRET,
-    url: process.env.NEXTAUTH_URL,
-    googleClientId: process.env.GOOGLE_CLIENT_ID,
-    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    githubClientId: process.env.GITHUB_CLIENT_ID,
-    githubClientSecret: process.env.GITHUB_CLIENT_SECRET,
+    secret: trimEnv('NEXTAUTH_SECRET'),
+    url: trimEnv('NEXTAUTH_URL'),
+    googleClientId: trimEnv('GOOGLE_CLIENT_ID'),
+    googleClientSecret: trimEnv('GOOGLE_CLIENT_SECRET'),
+    githubClientId: trimEnv('GITHUB_CLIENT_ID'),
+    githubClientSecret: trimEnv('GITHUB_CLIENT_SECRET'),
   },
   gmail: {
-    clientId: process.env.GMAIL_CLIENT_ID,
-    clientSecret: process.env.GMAIL_CLIENT_SECRET,
-    enabled: process.env.GMAIL_ENABLED === 'true',
+    clientId: trimEnv('GMAIL_CLIENT_ID'),
+    clientSecret: trimEnv('GMAIL_CLIENT_SECRET'),
+    enabled: trimEnv('GMAIL_ENABLED') === 'true',
   },
   database: {
-    url: process.env.TURSO_DATABASE_URL,
-    authToken: process.env.TURSO_AUTH_TOKEN,
+    url: trimEnv('TURSO_DATABASE_URL'),
+    authToken: trimEnv('TURSO_AUTH_TOKEN'),
   },
   ai: {
-    openaiApiKey: process.env.OPENAI_API_KEY,
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    mem0ApiKey: process.env.MEM0_API_KEY,
+    openaiApiKey: trimEnv('OPENAI_API_KEY'),
+    anthropicApiKey: trimEnv('ANTHROPIC_API_KEY'),
+    mem0ApiKey: trimEnv('MEM0_API_KEY'),
   },
-  appUrl: process.env.APP_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000',
+  appUrl: trimEnv('APP_URL') || trimEnv('NEXTAUTH_URL') || 'http://localhost:3000',
   isProduction: process.env.NODE_ENV === 'production',
   isDevelopment: process.env.NODE_ENV === 'development',
   isTest: process.env.NODE_ENV === 'test',

@@ -147,11 +147,13 @@ async function withRetry<T>(
 
 function getMem0Client(): MemoryClient {
   if (!mem0Client) {
-    if (!process.env.MEM0_API_KEY) {
+    // Trim to remove any trailing newlines/whitespace from Vercel CLI
+    const apiKey = process.env.MEM0_API_KEY?.trim();
+    if (!apiKey) {
       log('error', 'MEM0_API_KEY not configured');
       throw new Error('MEM0_API_KEY environment variable is not set');
     }
-    mem0Client = new MemoryClient({ apiKey: process.env.MEM0_API_KEY });
+    mem0Client = new MemoryClient({ apiKey });
     log('info', 'Mem0 client initialized');
   }
   return mem0Client;

@@ -11,9 +11,18 @@ let dbClient: Client | null = null;
 
 function getDb(): Client {
   if (!dbClient) {
+    // Trim environment variables to remove any trailing newlines/whitespace
+    // (Vercel CLI sometimes adds these incorrectly)
+    const dbUrl = process.env.TURSO_DATABASE_URL?.trim();
+    const authToken = process.env.TURSO_AUTH_TOKEN?.trim();
+
+    if (!dbUrl) {
+      throw new Error('TURSO_DATABASE_URL is not configured');
+    }
+
     dbClient = createClient({
-      url: process.env.TURSO_DATABASE_URL!,
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      url: dbUrl,
+      authToken: authToken,
     });
   }
   return dbClient;
