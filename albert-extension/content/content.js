@@ -10,7 +10,7 @@
 
   // Configuration
   const CONFIG = {
-    serverUrl: 'http://localhost:3001',
+    serverUrl: 'https://echo-two-omega.vercel.app',
     buttonEnabled: true,
   };
 

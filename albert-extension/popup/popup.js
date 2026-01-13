@@ -2,9 +2,9 @@
 
 // Configuration
 const CONFIG = {
-  // Will be updated from storage or environment
-  serverUrl: 'http://localhost:3001',
-  productionUrl: 'https://albert-app.vercel.app', // Update this after deployment
+  // Production URL for Echo/Albert
+  serverUrl: 'https://echo-two-omega.vercel.app',
+  productionUrl: 'https://echo-two-omega.vercel.app',
 };
 
 // State
