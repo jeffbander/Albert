@@ -2,7 +2,7 @@
 // Handles background tasks, keyboard shortcuts, and API communication
 
 const CONFIG = {
-  serverUrl: 'http://localhost:3001',
+  serverUrl: 'https://echo-two-omega.vercel.app',
 };
 
 // Load config from storage on startup
