@@ -350,7 +350,10 @@ async function executeTool(toolName: string, params: Record<string, unknown>): P
     }
 
     // Make the API call (relative URL - needs base URL for server-side)
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    // Use VERCEL_URL if available (set by Vercel), otherwise fallback to localhost
+    const vercelUrl = process.env.VERCEL_URL;
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
+      (vercelUrl ? `https://${vercelUrl}` : 'http://localhost:3000');
     const fullUrl = `${baseUrl}${url}`;
 
     console.log(`[SkillEngine] Calling ${apiInfo.method} ${fullUrl}`);
