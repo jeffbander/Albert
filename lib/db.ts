@@ -633,6 +633,9 @@ export async function initDatabase() {
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider)
   `);
+
+  // Initialize skill tables for Albert's skill authoring system
+  await initSkillTables();
 }
 
 export async function getLastConversation() {
@@ -2463,6 +2466,679 @@ export async function isOAuthTokenExpired(
   // Consider expired if less than 5 minutes remaining
   const bufferMs = 5 * 60 * 1000;
   return token.expiresAt.getTime() - bufferMs < Date.now();
+}
+
+// ============================================
+// Skill Types (imported from types/skill.ts)
+// ============================================
+
+import type {
+  AlbertSkill,
+  AlbertSkillWithSteps,
+  SkillStep,
+  SkillExecution,
+  SkillStatus,
+  SkillParameter,
+  CreateSkillInput,
+  UpdateSkillInput,
+  CreateSkillStepInput,
+} from '@/types/skill';
+
+// Re-export for convenience
+export type {
+  AlbertSkill,
+  AlbertSkillWithSteps,
+  SkillStep,
+  SkillExecution,
+  SkillStatus,
+  SkillParameter,
+};
+
+// ============================================
+// Skill Functions (Albert's Skill Authoring)
+// ============================================
+
+/**
+ * Initialize skill tables - call this from initDatabase()
+ */
+export async function initSkillTables(): Promise<void> {
+  const db = getDb();
+
+  // Skills table - stores skill definitions
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      description TEXT NOT NULL,
+      version TEXT DEFAULT '1.0.0',
+      instructions TEXT DEFAULT '',
+      system_context TEXT,
+      triggers TEXT DEFAULT '[]',
+      allowed_tools TEXT DEFAULT '[]',
+      required_tools TEXT DEFAULT '[]',
+      depends_on TEXT DEFAULT '[]',
+      is_active INTEGER DEFAULT 1,
+      created_by TEXT DEFAULT 'voice',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Skill steps table - stores workflow steps
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS skill_steps (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      step_order INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      tool_name TEXT NOT NULL,
+      parameter_mapping TEXT DEFAULT '{}',
+      condition TEXT,
+      on_success TEXT,
+      on_failure TEXT,
+      retry_count INTEGER DEFAULT 0,
+      output_key TEXT NOT NULL,
+      extract_fields TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Skill executions table - tracks execution history
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS skill_executions (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'paused', 'completed', 'failed')),
+      current_step_id TEXT,
+      input_data TEXT DEFAULT '{}',
+      step_results TEXT DEFAULT '{}',
+      context TEXT DEFAULT '{}',
+      error TEXT,
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME,
+      FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Create indexes for faster queries
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_skills_slug ON skills(slug)
+  `);
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active)
+  `);
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_skill_steps_skill_id ON skill_steps(skill_id)
+  `);
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_skill_executions_skill_id ON skill_executions(skill_id)
+  `);
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_skill_executions_status ON skill_executions(status)
+  `);
+}
+
+/**
+ * Generate a URL-safe slug from a name
+ */
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .substring(0, 64);
+}
+
+/**
+ * Create a new skill
+ */
+export async function createSkill(input: CreateSkillInput): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const slug = generateSlug(input.name);
+
+  await db.execute({
+    sql: `INSERT INTO skills (id, name, slug, description, instructions, triggers, allowed_tools, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'voice')`,
+    args: [
+      id,
+      input.name,
+      slug,
+      input.description,
+      input.instructions || '',
+      JSON.stringify(input.triggers),
+      JSON.stringify(input.allowedTools || []),
+    ],
+  });
+
+  // Add steps
+  for (let i = 0; i < input.steps.length; i++) {
+    const step = input.steps[i];
+    const stepId = crypto.randomUUID();
+    await db.execute({
+      sql: `INSERT INTO skill_steps (id, skill_id, step_order, name, description, tool_name, parameter_mapping, output_key, condition, on_success, on_failure, retry_count, extract_fields)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        stepId,
+        id,
+        i,
+        step.name,
+        step.description || null,
+        step.toolName,
+        JSON.stringify(step.parameterMapping),
+        step.outputKey,
+        step.condition || null,
+        step.onSuccess || null,
+        step.onFailure || null,
+        step.retryCount || 0,
+        JSON.stringify(step.extractFields || []),
+      ],
+    });
+  }
+
+  console.log(`[Skills] Created skill "${input.name}" with ${input.steps.length} steps`);
+  return id;
+}
+
+/**
+ * Get a skill by ID
+ */
+export async function getSkill(skillId: string): Promise<AlbertSkill | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM skills WHERE id = ?',
+    args: [skillId],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    slug: row.slug as string,
+    description: row.description as string,
+    version: row.version as string,
+    instructions: row.instructions as string,
+    systemContext: row.system_context as string | undefined,
+    triggers: JSON.parse((row.triggers as string) || '[]'),
+    allowedTools: JSON.parse((row.allowed_tools as string) || '[]'),
+    requiredTools: JSON.parse((row.required_tools as string) || '[]'),
+    dependsOn: JSON.parse((row.depends_on as string) || '[]'),
+    isActive: (row.is_active as number) === 1,
+    createdBy: row.created_by as 'voice' | 'manual' | 'import',
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+/**
+ * Get a skill by slug
+ */
+export async function getSkillBySlug(slug: string): Promise<AlbertSkill | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM skills WHERE slug = ?',
+    args: [slug],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    slug: row.slug as string,
+    description: row.description as string,
+    version: row.version as string,
+    instructions: row.instructions as string,
+    systemContext: row.system_context as string | undefined,
+    triggers: JSON.parse((row.triggers as string) || '[]'),
+    allowedTools: JSON.parse((row.allowed_tools as string) || '[]'),
+    requiredTools: JSON.parse((row.required_tools as string) || '[]'),
+    dependsOn: JSON.parse((row.depends_on as string) || '[]'),
+    isActive: (row.is_active as number) === 1,
+    createdBy: row.created_by as 'voice' | 'manual' | 'import',
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+/**
+ * Get a skill with its steps
+ */
+export async function getSkillWithSteps(skillId: string): Promise<AlbertSkillWithSteps | null> {
+  const skill = await getSkill(skillId);
+  if (!skill) return null;
+
+  const steps = await getSkillSteps(skillId);
+  return { ...skill, steps };
+}
+
+/**
+ * List all skills
+ */
+export async function listSkills(activeOnly: boolean = false): Promise<AlbertSkill[]> {
+  const db = getDb();
+  const sql = activeOnly
+    ? 'SELECT * FROM skills WHERE is_active = 1 ORDER BY updated_at DESC'
+    : 'SELECT * FROM skills ORDER BY updated_at DESC';
+  const result = await db.execute(sql);
+
+  return result.rows.map(row => ({
+    id: row.id as string,
+    name: row.name as string,
+    slug: row.slug as string,
+    description: row.description as string,
+    version: row.version as string,
+    instructions: row.instructions as string,
+    systemContext: row.system_context as string | undefined,
+    triggers: JSON.parse((row.triggers as string) || '[]'),
+    allowedTools: JSON.parse((row.allowed_tools as string) || '[]'),
+    requiredTools: JSON.parse((row.required_tools as string) || '[]'),
+    dependsOn: JSON.parse((row.depends_on as string) || '[]'),
+    isActive: (row.is_active as number) === 1,
+    createdBy: row.created_by as 'voice' | 'manual' | 'import',
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  }));
+}
+
+/**
+ * Update a skill
+ */
+export async function updateSkill(skillId: string, updates: UpdateSkillInput): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const args: (string | number | null)[] = [];
+
+  if (updates.name !== undefined) {
+    setClauses.push('name = ?');
+    args.push(updates.name);
+    setClauses.push('slug = ?');
+    args.push(generateSlug(updates.name));
+  }
+  if (updates.description !== undefined) {
+    setClauses.push('description = ?');
+    args.push(updates.description);
+  }
+  if (updates.triggers !== undefined) {
+    setClauses.push('triggers = ?');
+    args.push(JSON.stringify(updates.triggers));
+  }
+  if (updates.instructions !== undefined) {
+    setClauses.push('instructions = ?');
+    args.push(updates.instructions);
+  }
+  if (updates.isActive !== undefined) {
+    setClauses.push('is_active = ?');
+    args.push(updates.isActive ? 1 : 0);
+  }
+  if (updates.allowedTools !== undefined) {
+    setClauses.push('allowed_tools = ?');
+    args.push(JSON.stringify(updates.allowedTools));
+  }
+
+  if (args.length === 0) return;
+
+  args.push(skillId);
+  await db.execute({
+    sql: `UPDATE skills SET ${setClauses.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+/**
+ * Delete a skill
+ */
+export async function deleteSkill(skillId: string): Promise<void> {
+  const db = getDb();
+  // Steps and executions will be deleted via CASCADE
+  await db.execute({
+    sql: 'DELETE FROM skills WHERE id = ?',
+    args: [skillId],
+  });
+  console.log(`[Skills] Deleted skill ${skillId}`);
+}
+
+/**
+ * Get steps for a skill
+ */
+export async function getSkillSteps(skillId: string): Promise<SkillStep[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM skill_steps WHERE skill_id = ? ORDER BY step_order ASC',
+    args: [skillId],
+  });
+
+  return result.rows.map(row => ({
+    id: row.id as string,
+    skillId: row.skill_id as string,
+    order: row.step_order as number,
+    name: row.name as string,
+    description: row.description as string | undefined,
+    toolName: row.tool_name as string,
+    parameterMapping: JSON.parse((row.parameter_mapping as string) || '{}'),
+    condition: row.condition as string | undefined,
+    onSuccess: row.on_success as string | undefined,
+    onFailure: row.on_failure as string | undefined,
+    retryCount: row.retry_count as number,
+    outputKey: row.output_key as string,
+    extractFields: JSON.parse((row.extract_fields as string) || '[]'),
+  }));
+}
+
+/**
+ * Add a step to a skill
+ */
+export async function addSkillStep(skillId: string, step: CreateSkillStepInput): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  // Get current max order
+  const maxOrderResult = await db.execute({
+    sql: 'SELECT MAX(step_order) as max_order FROM skill_steps WHERE skill_id = ?',
+    args: [skillId],
+  });
+  const maxOrder = (maxOrderResult.rows[0]?.max_order as number) ?? -1;
+  const order = step.order ?? maxOrder + 1;
+
+  await db.execute({
+    sql: `INSERT INTO skill_steps (id, skill_id, step_order, name, description, tool_name, parameter_mapping, output_key, condition, on_success, on_failure, retry_count, extract_fields)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      skillId,
+      order,
+      step.name,
+      step.description || null,
+      step.toolName,
+      JSON.stringify(step.parameterMapping),
+      step.outputKey,
+      step.condition || null,
+      step.onSuccess || null,
+      step.onFailure || null,
+      step.retryCount || 0,
+      JSON.stringify(step.extractFields || []),
+    ],
+  });
+
+  // Update skill's updated_at
+  await db.execute({
+    sql: 'UPDATE skills SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    args: [skillId],
+  });
+
+  return id;
+}
+
+/**
+ * Update a skill step
+ */
+export async function updateSkillStep(
+  stepId: string,
+  updates: Partial<CreateSkillStepInput>
+): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = [];
+  const args: (string | number | null)[] = [];
+
+  if (updates.name !== undefined) {
+    setClauses.push('name = ?');
+    args.push(updates.name);
+  }
+  if (updates.description !== undefined) {
+    setClauses.push('description = ?');
+    args.push(updates.description);
+  }
+  if (updates.toolName !== undefined) {
+    setClauses.push('tool_name = ?');
+    args.push(updates.toolName);
+  }
+  if (updates.parameterMapping !== undefined) {
+    setClauses.push('parameter_mapping = ?');
+    args.push(JSON.stringify(updates.parameterMapping));
+  }
+  if (updates.outputKey !== undefined) {
+    setClauses.push('output_key = ?');
+    args.push(updates.outputKey);
+  }
+  if (updates.order !== undefined) {
+    setClauses.push('step_order = ?');
+    args.push(updates.order);
+  }
+  if (updates.condition !== undefined) {
+    setClauses.push('condition = ?');
+    args.push(updates.condition);
+  }
+  if (updates.retryCount !== undefined) {
+    setClauses.push('retry_count = ?');
+    args.push(updates.retryCount);
+  }
+
+  if (args.length === 0) return;
+
+  args.push(stepId);
+  await db.execute({
+    sql: `UPDATE skill_steps SET ${setClauses.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+/**
+ * Delete a skill step
+ */
+export async function deleteSkillStep(stepId: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM skill_steps WHERE id = ?',
+    args: [stepId],
+  });
+}
+
+/**
+ * Reorder skill steps
+ */
+export async function reorderSkillSteps(skillId: string, stepIds: string[]): Promise<void> {
+  const db = getDb();
+  for (let i = 0; i < stepIds.length; i++) {
+    await db.execute({
+      sql: 'UPDATE skill_steps SET step_order = ? WHERE id = ? AND skill_id = ?',
+      args: [i, stepIds[i], skillId],
+    });
+  }
+}
+
+// ============================================
+// Skill Execution Functions
+// ============================================
+
+/**
+ * Create a skill execution record
+ */
+export async function createSkillExecution(
+  skillId: string,
+  inputData: Record<string, unknown> = {}
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  await db.execute({
+    sql: `INSERT INTO skill_executions (id, skill_id, status, input_data)
+          VALUES (?, ?, 'pending', ?)`,
+    args: [id, skillId, JSON.stringify(inputData)],
+  });
+
+  console.log(`[Skills] Created execution ${id} for skill ${skillId}`);
+  return id;
+}
+
+/**
+ * Get a skill execution by ID
+ */
+export async function getSkillExecution(executionId: string): Promise<SkillExecution | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM skill_executions WHERE id = ?',
+    args: [executionId],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id as string,
+    skillId: row.skill_id as string,
+    status: row.status as SkillStatus,
+    currentStepId: row.current_step_id as string | undefined,
+    inputData: JSON.parse((row.input_data as string) || '{}'),
+    stepResults: JSON.parse((row.step_results as string) || '{}'),
+    context: JSON.parse((row.context as string) || '{}'),
+    error: row.error as string | undefined,
+    startedAt: new Date(row.started_at as string),
+    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+  };
+}
+
+/**
+ * Update a skill execution
+ */
+export async function updateSkillExecution(
+  executionId: string,
+  updates: Partial<{
+    status: SkillStatus;
+    currentStepId: string | null;
+    stepResults: Record<string, unknown>;
+    context: Record<string, unknown>;
+    error: string | null;
+    completedAt: Date;
+  }>
+): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = [];
+  const args: (string | null)[] = [];
+
+  if (updates.status !== undefined) {
+    setClauses.push('status = ?');
+    args.push(updates.status);
+  }
+  if (updates.currentStepId !== undefined) {
+    setClauses.push('current_step_id = ?');
+    args.push(updates.currentStepId);
+  }
+  if (updates.stepResults !== undefined) {
+    setClauses.push('step_results = ?');
+    args.push(JSON.stringify(updates.stepResults));
+  }
+  if (updates.context !== undefined) {
+    setClauses.push('context = ?');
+    args.push(JSON.stringify(updates.context));
+  }
+  if (updates.error !== undefined) {
+    setClauses.push('error = ?');
+    args.push(updates.error);
+  }
+  if (updates.completedAt !== undefined) {
+    setClauses.push('completed_at = ?');
+    args.push(updates.completedAt.toISOString());
+  }
+
+  if (args.length === 0) return;
+
+  args.push(executionId);
+  await db.execute({
+    sql: `UPDATE skill_executions SET ${setClauses.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+/**
+ * Get recent executions for a skill
+ */
+export async function getSkillExecutions(
+  skillId: string,
+  limit: number = 10
+): Promise<SkillExecution[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM skill_executions WHERE skill_id = ? ORDER BY started_at DESC LIMIT ?',
+    args: [skillId, limit],
+  });
+
+  return result.rows.map(row => ({
+    id: row.id as string,
+    skillId: row.skill_id as string,
+    status: row.status as SkillStatus,
+    currentStepId: row.current_step_id as string | undefined,
+    inputData: JSON.parse((row.input_data as string) || '{}'),
+    stepResults: JSON.parse((row.step_results as string) || '{}'),
+    context: JSON.parse((row.context as string) || '{}'),
+    error: row.error as string | undefined,
+    startedAt: new Date(row.started_at as string),
+    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+  }));
+}
+
+/**
+ * Get the most recent execution (for voice status checks)
+ */
+export async function getMostRecentExecution(): Promise<SkillExecution | null> {
+  const db = getDb();
+  const result = await db.execute(
+    'SELECT * FROM skill_executions ORDER BY started_at DESC LIMIT 1'
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id as string,
+    skillId: row.skill_id as string,
+    status: row.status as SkillStatus,
+    currentStepId: row.current_step_id as string | undefined,
+    inputData: JSON.parse((row.input_data as string) || '{}'),
+    stepResults: JSON.parse((row.step_results as string) || '{}'),
+    context: JSON.parse((row.context as string) || '{}'),
+    error: row.error as string | undefined,
+    startedAt: new Date(row.started_at as string),
+    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+  };
+}
+
+/**
+ * Get running/paused executions
+ */
+export async function getActiveExecutions(): Promise<SkillExecution[]> {
+  const db = getDb();
+  const result = await db.execute(
+    "SELECT * FROM skill_executions WHERE status IN ('pending', 'running', 'paused') ORDER BY started_at DESC"
+  );
+
+  return result.rows.map(row => ({
+    id: row.id as string,
+    skillId: row.skill_id as string,
+    status: row.status as SkillStatus,
+    currentStepId: row.current_step_id as string | undefined,
+    inputData: JSON.parse((row.input_data as string) || '{}'),
+    stepResults: JSON.parse((row.step_results as string) || '{}'),
+    context: JSON.parse((row.context as string) || '{}'),
+    error: row.error as string | undefined,
+    startedAt: new Date(row.started_at as string),
+    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+  }));
+}
+
+/**
+ * Clean up old completed executions
+ */
+export async function cleanupOldExecutions(maxAgeDays: number = 30): Promise<number> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `DELETE FROM skill_executions
+          WHERE status IN ('completed', 'failed')
+          AND datetime(started_at) < datetime('now', '-' || ? || ' days')`,
+    args: [maxAgeDays],
+  });
+  return result.rowsAffected;
 }
 
 export default getDb;

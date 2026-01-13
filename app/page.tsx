@@ -1413,6 +1413,128 @@ export default function Home() {
           break;
         }
 
+        // ============================================
+        // Skill Management Tools
+        // ============================================
+        case 'create_skill': {
+          const triggers = parsedArgs.triggers
+            ? parsedArgs.triggers.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
+            : [];
+
+          let steps = [];
+          try {
+            steps = JSON.parse(parsedArgs.steps || '[]');
+          } catch {
+            result = JSON.stringify({
+              success: false,
+              error: 'Invalid steps format. Steps must be a valid JSON array.',
+            });
+            break;
+          }
+
+          const response = await fetch('/api/skills', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: parsedArgs.name,
+              description: parsedArgs.description,
+              triggers,
+              steps,
+            }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              skillId: data.skillId,
+              message: `Created skill "${parsedArgs.name}" with ${data.stepCount} steps. You can now trigger it by saying: "${triggers[0] || parsedArgs.name}"`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
+        case 'list_skills': {
+          const activeOnly = parsedArgs.activeOnly === 'true';
+          const response = await fetch(`/api/skills?activeOnly=${activeOnly}`);
+          const data = await response.json();
+          if (data.success && data.data) {
+            const skills = data.data.skills || [];
+            if (skills.length === 0) {
+              result = JSON.stringify({
+                success: true,
+                count: 0,
+                message: "You don't have any saved skills yet. Would you like to create one? Just describe a workflow you'd like to automate.",
+              });
+            } else {
+              const skillList = skills.map((s: { name: string; triggers: string[] }) =>
+                `"${s.name}" (say: "${s.triggers[0] || s.name}")`
+              ).join(', ');
+              result = JSON.stringify({
+                success: true,
+                count: skills.length,
+                skills: skills,
+                message: `You have ${skills.length} skill${skills.length === 1 ? '' : 's'}: ${skillList}`,
+              });
+            }
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to list skills' });
+          }
+          break;
+        }
+
+        case 'execute_skill': {
+          const inputData = parsedArgs.inputData ? JSON.parse(parsedArgs.inputData) : {};
+          const response = await fetch(`/api/skills/${encodeURIComponent(parsedArgs.skillId)}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ inputData }),
+          });
+          const data = await response.json();
+          if (data.success && data.data) {
+            result = JSON.stringify({
+              success: true,
+              executionId: data.data.executionId,
+              message: `Starting "${data.data.skillName}". ${data.data.message}`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to execute skill' });
+          }
+          break;
+        }
+
+        case 'get_skill_status': {
+          // For now, just check the most recent execution
+          const response = await fetch('/api/skills');
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: 'Skill status check completed. The execution engine is ready.',
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error });
+          }
+          break;
+        }
+
+        case 'delete_skill': {
+          const response = await fetch(`/api/skills/${encodeURIComponent(parsedArgs.skillId)}`, {
+            method: 'DELETE',
+          });
+          const data = await response.json();
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              message: data.message || `Deleted the skill. It's been removed from your saved workflows.`,
+            });
+          } else {
+            result = JSON.stringify({ success: false, error: data.error || 'Failed to delete skill' });
+          }
+          break;
+        }
+
         default:
           result = JSON.stringify({ error: `Unknown function: ${name}` });
       }

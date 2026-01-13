@@ -773,6 +773,99 @@ export const BUILD_TOOLS: OpenAITool[] = [
       },
     },
   },
+
+  // ============================================
+  // Skill Management Tools
+  // ============================================
+  {
+    type: 'function',
+    name: 'create_skill',
+    description: 'Create a new skill/workflow that chains multiple capabilities together. Use when user says "create a workflow that...", "make a skill for...", "teach yourself to...", "save this as a skill", or describes a multi-step automation they want to save for later.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'A short, memorable name for the skill (e.g., "Daily Research Summary", "Recipe Price Checker").',
+        },
+        description: {
+          type: 'string',
+          description: 'What the skill does and when to use it.',
+        },
+        triggers: {
+          type: 'string',
+          description: 'Comma-separated phrases that should trigger this skill (e.g., "do research, research topic, start researching").',
+        },
+        steps: {
+          type: 'string',
+          description: 'JSON array describing each step. Each step needs: {"name": "Step Name", "toolName": "tool_to_use", "parameterMapping": {"param": {"source": "input|constant|previous_step", "value": "value_or_path"}}, "outputKey": "result_key"}. Example: [{"name":"Research","toolName":"start_research","parameterMapping":{"topic":{"source":"input","value":"topic"}},"outputKey":"research"}]',
+        },
+      },
+      required: ['name', 'description', 'triggers', 'steps'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_skills',
+    description: 'List all saved skills/workflows. Use when user asks "what skills do I have?", "show my workflows", "what can you do?", or wants to see available automations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        activeOnly: {
+          type: 'string',
+          description: 'Set to "true" to only show active skills. Default shows all.',
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    name: 'execute_skill',
+    description: 'Run a saved skill/workflow by ID or name. Use when user says "do [skill name]", "run my [skill]", "execute the research workflow", or when a trigger phrase matches a saved skill.',
+    parameters: {
+      type: 'object',
+      properties: {
+        skillId: {
+          type: 'string',
+          description: 'The ID, slug, or name of the skill to execute.',
+        },
+        inputData: {
+          type: 'string',
+          description: 'Optional JSON object with input parameters for the skill (e.g., {"topic": "quantum computing", "email": "user@example.com"}).',
+        },
+      },
+      required: ['skillId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_skill_status',
+    description: 'Check the status of a running skill execution. Use when user asks "how is the skill going?", "what step are you on?", "is it done yet?", or wants progress on a workflow.',
+    parameters: {
+      type: 'object',
+      properties: {
+        executionId: {
+          type: 'string',
+          description: 'The execution ID to check. If not provided, checks the most recent execution.',
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    name: 'delete_skill',
+    description: 'Delete a saved skill/workflow. Use when user says "remove the skill", "delete my workflow", "forget the [skill name]", or wants to remove a saved automation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        skillId: {
+          type: 'string',
+          description: 'The ID, slug, or name of the skill to delete.',
+        },
+      },
+      required: ['skillId'],
+    },
+  },
 ];
 
 /**
