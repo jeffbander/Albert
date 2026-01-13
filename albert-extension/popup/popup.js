@@ -109,7 +109,14 @@ async function startVoice() {
     transcript.textContent = 'Connected! Start speaking...';
   } catch (error) {
     console.error('Voice error:', error);
-    transcript.textContent = `Error: ${error.message}`;
+    // Provide helpful error messages
+    if (error.name === 'NotAllowedError' || error.message.includes('Permission')) {
+      transcript.textContent = 'Microphone access denied. Click the lock icon in the address bar and allow microphone access, then try again.';
+    } else if (error.name === 'NotFoundError') {
+      transcript.textContent = 'No microphone found. Please connect a microphone and try again.';
+    } else {
+      transcript.textContent = `Error: ${error.message}`;
+    }
     stopVoice();
   }
 }
