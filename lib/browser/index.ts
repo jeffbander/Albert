@@ -70,14 +70,15 @@ export function createBrowserProvider(config: BrowserProviderConfig): BrowserPro
  * @returns Browser provider instance
  */
 export function createBrowserProviderFromEnv(): BrowserProvider {
-  const providerType = process.env.BROWSER_PROVIDER || 'local-cdp';
+  // Trim env vars to remove trailing newlines/whitespace (Vercel CLI issue)
+  const providerType = (process.env.BROWSER_PROVIDER?.trim() || 'local-cdp') as BrowserProviderConfig['type'];
 
   const config: BrowserProviderConfig = {
-    type: providerType as BrowserProviderConfig['type'],
-    debugPort: parseInt(process.env.CHROME_DEBUG_PORT || '9222', 10),
-    apiKey: process.env.BROWSERBASE_API_KEY,
-    projectId: process.env.BROWSERBASE_PROJECT_ID,
-    debug: process.env.BROWSER_DEBUG === 'true',
+    type: providerType,
+    debugPort: parseInt(process.env.CHROME_DEBUG_PORT?.trim() || '9222', 10),
+    apiKey: process.env.BROWSERBASE_API_KEY?.trim(),
+    projectId: process.env.BROWSERBASE_PROJECT_ID?.trim(),
+    debug: process.env.BROWSER_DEBUG?.trim() === 'true',
   };
 
   return createBrowserProvider(config);
@@ -93,17 +94,17 @@ export function createBrowserProviderFromEnv(): BrowserProvider {
 export async function createBrowserProviderWithFallback(
   preferCloud = false
 ): Promise<BrowserProvider> {
-  const hasCloudConfig = !!process.env.BROWSERBASE_API_KEY;
-  const debugPort = parseInt(process.env.CHROME_DEBUG_PORT || '9222', 10);
-  const debug = process.env.BROWSER_DEBUG === 'true';
+  const hasCloudConfig = !!process.env.BROWSERBASE_API_KEY?.trim();
+  const debugPort = parseInt(process.env.CHROME_DEBUG_PORT?.trim() || '9222', 10);
+  const debug = process.env.BROWSER_DEBUG?.trim() === 'true';
 
   // Try cloud first if preferred and configured
   if (preferCloud && hasCloudConfig) {
     try {
       const cloudProvider = new BrowserbaseProvider({
         type: 'browserbase',
-        apiKey: process.env.BROWSERBASE_API_KEY,
-        projectId: process.env.BROWSERBASE_PROJECT_ID,
+        apiKey: process.env.BROWSERBASE_API_KEY?.trim(),
+        projectId: process.env.BROWSERBASE_PROJECT_ID?.trim(),
         debug,
       });
 
@@ -132,8 +133,8 @@ export async function createBrowserProviderWithFallback(
       try {
         const cloudProvider = new BrowserbaseProvider({
           type: 'browserbase',
-          apiKey: process.env.BROWSERBASE_API_KEY,
-          projectId: process.env.BROWSERBASE_PROJECT_ID,
+          apiKey: process.env.BROWSERBASE_API_KEY?.trim(),
+          projectId: process.env.BROWSERBASE_PROJECT_ID?.trim(),
           debug,
         });
 
@@ -198,9 +199,9 @@ export async function getBrowserProviderStatus(): Promise<{
   recommendedProvider: BrowserProviderConfig['type'];
   chromeDebugPort: number;
 }> {
-  const chromeDebugPort = parseInt(process.env.CHROME_DEBUG_PORT || '9222', 10);
+  const chromeDebugPort = parseInt(process.env.CHROME_DEBUG_PORT?.trim() || '9222', 10);
   const localCdpAvailable = await isLocalChromeAvailable(chromeDebugPort);
-  const browserbaseConfigured = !!process.env.BROWSERBASE_API_KEY;
+  const browserbaseConfigured = !!process.env.BROWSERBASE_API_KEY?.trim();
 
   let recommendedProvider: BrowserProviderConfig['type'] = 'local-cdp';
   if (browserbaseConfigured && !localCdpAvailable) {
@@ -225,7 +226,7 @@ export async function getBrowserProviderStatus(): Promise<{
  * @returns Recommended provider type based on environment
  */
 export function detectBestProvider(): BrowserProviderConfig['type'] {
-  if (process.env.BROWSERBASE_API_KEY) {
+  if (process.env.BROWSERBASE_API_KEY?.trim()) {
     return 'browserbase';
   }
   return 'local-cdp';
