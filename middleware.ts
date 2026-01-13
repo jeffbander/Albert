@@ -47,14 +47,12 @@ export const config = {
     // Protect memory routes
     '/api/memory/:path*',
 
-    // Protect conversation routes
-    '/api/conversation/:path*',
+    // Note: /api/conversation/* routes use PasscodeGate client-side auth instead
 
     // Protect codebase routes
     '/api/codebase/:path*',
 
-    // Protect speaker/voice profile routes
-    '/api/speakers/:path*',
+    // Note: /api/speakers/* routes use PasscodeGate client-side auth instead
 
     // Note: /api/auth/* routes are NOT protected (NextAuth handles its own auth)
     // Note: /api/realtime/* routes can be protected if needed
