@@ -1088,113 +1088,128 @@ export default function Home() {
           break;
         }
 
-        // Self-improvement tools
+        // Self-improvement tools (using postWithRetry for reliability)
         case 'read_my_code': {
-          const response = await fetch('/api/codebase', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'read', filePath: parsedArgs.filePath }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{
+            success: boolean;
+            content?: string;
+            filePath?: string;
+            lines?: number;
+            error?: string;
+          }>(
+            '/api/codebase',
+            { action: 'read', filePath: parsedArgs.filePath },
+            { timeout: timeouts.defaultFetch }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.content) {
             // Summarize for voice - full content would be too long
-            const preview = data.content.slice(0, 1500);
+            const preview = fetchResult.data.content.slice(0, 1500);
             result = JSON.stringify({
               success: true,
-              filePath: data.filePath,
-              lines: data.lines,
-              preview: preview + (data.content.length > 1500 ? '\n... (truncated for voice)' : ''),
-              message: `I've read ${data.filePath}. It has ${data.lines} lines of code.`,
+              filePath: fetchResult.data.filePath,
+              lines: fetchResult.data.lines,
+              preview: preview + (fetchResult.data.content.length > 1500 ? '\n... (truncated for voice)' : ''),
+              message: `I've read ${fetchResult.data.filePath}. It has ${fetchResult.data.lines} lines of code.`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to read code' });
           }
           break;
         }
 
         case 'list_my_files': {
-          const response = await fetch('/api/codebase', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'list', directory: parsedArgs.directory }),
-          });
-          const data = await response.json();
-          if (data.success) {
-            const fileList = data.files.map((f: { name: string; type: string }) =>
+          const fetchResult = await postWithRetry<{
+            success: boolean;
+            files?: Array<{ name: string; type: string }>;
+            directory?: string;
+            error?: string;
+          }>(
+            '/api/codebase',
+            { action: 'list', directory: parsedArgs.directory },
+            { timeout: timeouts.defaultFetch }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.files) {
+            const fileList = fetchResult.data.files.map((f) =>
               `${f.type === 'directory' ? '📁' : '📄'} ${f.name}`
             ).join(', ');
             result = JSON.stringify({
               success: true,
-              directory: data.directory,
-              files: data.files,
-              message: `In ${data.directory}, I found: ${fileList}`,
+              directory: fetchResult.data.directory,
+              files: fetchResult.data.files,
+              message: `In ${fetchResult.data.directory}, I found: ${fileList}`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to list files' });
           }
           break;
         }
 
         case 'suggest_improvement': {
-          const response = await fetch('/api/codebase', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            '/api/codebase',
+            {
               action: 'suggest',
               filePath: parsedArgs.filePath,
               description: parsedArgs.description,
               priority: parsedArgs.priority,
-            }),
-          });
-          const data = await response.json();
-          result = JSON.stringify(data);
+            },
+            { timeout: timeouts.defaultFetch }
+          );
+          result = JSON.stringify(fetchResult.data || { success: false, error: fetchResult.error || 'Failed to suggest improvement' });
           break;
         }
 
         case 'improve_myself': {
-          const response = await fetch('/api/self-improve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const fetchResult = await postWithRetry<{
+            success: boolean;
+            message?: string;
+            logId?: string;
+            error?: string;
+          }>(
+            '/api/self-improve',
+            {
               action: 'improve',
               task: parsedArgs.task,
               reason: parsedArgs.reason,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+            },
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: `I'm now improving myself! ${data.message}. I'll let you know when I'm done. The changes will apply automatically.`,
-              logId: data.logId,
+              message: `I'm now improving myself! ${fetchResult.data.message}. I'll let you know when I'm done. The changes will apply automatically.`,
+              logId: fetchResult.data.logId,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to improve' });
           }
           break;
         }
 
         case 'add_new_tool': {
-          const response = await fetch('/api/self-improve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const fetchResult = await postWithRetry<{
+            success: boolean;
+            logId?: string;
+            error?: string;
+          }>(
+            '/api/self-improve',
+            {
               action: 'add_tool',
               toolName: parsedArgs.toolName,
               toolDescription: parsedArgs.toolDescription,
               parameters: parsedArgs.parameters,
               implementation: parsedArgs.implementation,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+            },
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: `I'm adding a new capability to myself: "${parsedArgs.toolName}". Claude Code is implementing it now. Once complete, I'll have this new ability!`,
-              logId: data.logId,
+              logId: fetchResult.data.logId,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to add tool' });
           }
           break;
         }
