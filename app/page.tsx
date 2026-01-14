@@ -20,7 +20,7 @@ import {
   shouldNotifyVoiceResearch,
 } from '@/lib/researchProgressManager';
 import { onClarificationRequest } from '@/lib/interactiveSession';
-import { postWithRetry } from '@/lib/utils/fetchWithRetry';
+import { postWithRetry, getWithRetry } from '@/lib/utils/fetchWithRetry';
 import { formatForVoice, formatErrorForVoice } from '@/lib/utils/voiceFormatter';
 import { circuitBreakers } from '@/lib/utils/circuitBreaker';
 import { timeouts } from '@/lib/config';
@@ -620,52 +620,54 @@ export default function Home() {
 
       switch (name) {
         case 'start_build_project': {
-          const response = await fetch('/api/build/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(parsedArgs),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; projectId?: string; error?: string }>(
+            '/api/build/start',
+            parsedArgs,
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             // Subscribe to build progress for proactive voice updates
-            subscribeToBuildProgress(data.projectId, parsedArgs.projectDescription);
+            subscribeToBuildProgress(fetchResult.data.projectId!, parsedArgs.projectDescription);
             result = JSON.stringify({
               success: true,
-              message: `Build started! Project ID: ${data.projectId}. I'm now autonomously building "${parsedArgs.projectDescription}". I'll keep you updated on the progress and let you know when it's done.`,
-              projectId: data.projectId,
+              message: `Build started! Project ID: ${fetchResult.data.projectId}. I'm now autonomously building "${parsedArgs.projectDescription}". I'll keep you updated on the progress and let you know when it's done.`,
+              projectId: fetchResult.data.projectId,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to start build' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to start build' });
           }
           break;
         }
 
         case 'check_build_status': {
           const projectId = parsedArgs.projectId;
-          let url = '/api/build/projects';
-          if (projectId) {
-            url = `/api/build/${projectId}/status`;
-          }
-          const response = await fetch(url);
-          const data = await response.json();
-          if (data.success) {
-            if (data.project) {
+          const url = projectId ? `/api/build/${projectId}/status` : '/api/build/projects';
+          const fetchResult = await getWithRetry<{
+            success: boolean;
+            project?: { id: string; description: string; status: string; projectType: string; localPort?: number; deployUrl?: string };
+            projects?: Array<{ id: string; description: string; status: string; projectType: string; localPort?: number }>;
+            logs?: Array<unknown>;
+            error?: string;
+          }>(url, { timeout: timeouts.buildStatus });
+
+          if (fetchResult.success && fetchResult.data?.success) {
+            if (fetchResult.data.project) {
               // Single project status
               result = JSON.stringify({
                 success: true,
                 project: {
-                  id: data.project.id,
-                  description: data.project.description,
-                  status: data.project.status,
-                  projectType: data.project.projectType,
-                  localPort: data.project.localPort,
-                  deployUrl: data.project.deployUrl,
+                  id: fetchResult.data.project.id,
+                  description: fetchResult.data.project.description,
+                  status: fetchResult.data.project.status,
+                  projectType: fetchResult.data.project.projectType,
+                  localPort: fetchResult.data.project.localPort,
+                  deployUrl: fetchResult.data.project.deployUrl,
                 },
-                recentLogs: data.logs?.slice(-5) || [],
+                recentLogs: fetchResult.data.logs?.slice(-5) || [],
               });
-            } else if (data.projects) {
+            } else if (fetchResult.data.projects) {
               // Most recent project
-              const latest = data.projects[0];
+              const latest = fetchResult.data.projects[0];
               if (latest) {
                 result = JSON.stringify({
                   success: true,
@@ -679,39 +681,42 @@ export default function Home() {
               result = JSON.stringify({ success: true, message: 'No projects found.' });
             }
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to get status' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to get status' });
           }
           break;
         }
 
         case 'modify_project': {
           const { projectId, changeDescription } = parsedArgs;
-          const response = await fetch(`/api/build/${projectId}/modify`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ changeDescription }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            `/api/build/${projectId}/modify`,
+            { changeDescription },
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: `Modification started for project ${projectId}. I'm implementing the changes: "${changeDescription}"`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to modify project' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to modify project' });
           }
           break;
         }
 
         case 'list_projects': {
-          const response = await fetch('/api/build/projects');
-          const data = await response.json();
-          if (data.success) {
-            const projects = data.projects.slice(0, parseInt(parsedArgs.limit) || 10);
+          const fetchResult = await getWithRetry<{
+            success: boolean;
+            projects?: Array<{ id: string; description: string; status: string; projectType: string; localPort?: number }>;
+            error?: string;
+          }>('/api/build/projects', { timeout: timeouts.buildStatus });
+
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.projects) {
+            const projects = fetchResult.data.projects.slice(0, parseInt(parsedArgs.limit) || 10);
             result = JSON.stringify({
               success: true,
               count: projects.length,
-              projects: projects.map((p: { id: string; description: string; status: string; projectType: string; localPort?: number }) => ({
+              projects: projects.map((p) => ({
                 id: p.id,
                 description: p.description.slice(0, 50) + '...',
                 status: p.status,
@@ -720,27 +725,26 @@ export default function Home() {
               })),
             });
           } else {
-            result = JSON.stringify({ success: false, error: 'Failed to list projects' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to list projects' });
           }
           break;
         }
 
         case 'deploy_project': {
           const { projectId, production } = parsedArgs;
-          const response = await fetch(`/api/build/${projectId}/deploy`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ production: production === 'true' }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; url?: string; error?: string }>(
+            `/api/build/${projectId}/deploy`,
+            { production: production === 'true' },
+            { timeout: timeouts.buildDeploy }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: `Deployed to Vercel! Your project is live at ${data.url}`,
-              url: data.url,
+              message: `Deployed to Vercel! Your project is live at ${fetchResult.data.url}`,
+              url: fetchResult.data.url,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Deployment failed' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Deployment failed' });
           }
           break;
         }
@@ -749,25 +753,24 @@ export default function Home() {
           const { projectId, owner, repo, commitMessage } = parsedArgs;
           // Get GitHub username if owner not provided
           const ghOwner = owner || 'jeffbander'; // Default to user's GitHub
-          const response = await fetch(`/api/build/${projectId}/github`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const fetchResult = await postWithRetry<{ success: boolean; repoUrl?: string; commitHash?: string; error?: string }>(
+            `/api/build/${projectId}/github`,
+            {
               owner: ghOwner,
               repo,
               commitMessage: commitMessage || `Built with Albert: ${repo}`,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+            },
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: `Pushed to GitHub! Repository: ${data.repoUrl}`,
-              repoUrl: data.repoUrl,
-              commitHash: data.commitHash,
+              message: `Pushed to GitHub! Repository: ${fetchResult.data.repoUrl}`,
+              repoUrl: fetchResult.data.repoUrl,
+              commitHash: fetchResult.data.commitHash,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Push to GitHub failed' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Push to GitHub failed' });
           }
           break;
         }
@@ -776,12 +779,16 @@ export default function Home() {
           let targetProjectId = parsedArgs.projectId;
           // If no project ID, get the most recent running build
           if (!targetProjectId) {
-            const projectsRes = await fetch('/api/build/projects');
-            const projectsData = await projectsRes.json();
-            const runningBuild = projectsData.projects?.find((p: { status: string }) =>
-              ['building', 'planning', 'testing', 'deploying'].includes(p.status)
-            );
-            targetProjectId = runningBuild?.id;
+            const projectsResult = await getWithRetry<{
+              success: boolean;
+              projects?: Array<{ id: string; status: string }>;
+            }>('/api/build/projects', { timeout: timeouts.buildStatus });
+            if (projectsResult.success && projectsResult.data?.projects) {
+              const runningBuild = projectsResult.data.projects.find((p) =>
+                ['building', 'planning', 'testing', 'deploying'].includes(p.status)
+              );
+              targetProjectId = runningBuild?.id;
+            }
           }
           if (!targetProjectId) {
             result = JSON.stringify({ success: false, error: 'No running build found to cancel' });
@@ -792,31 +799,33 @@ export default function Home() {
               buildUnsubscribeRef.current = null;
               activeBuildIdRef.current = null;
             }
-            const response = await fetch(`/api/build/${targetProjectId}/cancel`, { method: 'POST' });
-            const data = await response.json();
-            result = JSON.stringify(data);
+            const cancelResult = await postWithRetry<{ success: boolean; error?: string }>(
+              `/api/build/${targetProjectId}/cancel`,
+              {},
+              { timeout: timeouts.buildStatus }
+            );
+            result = JSON.stringify(cancelResult.data || { success: false, error: cancelResult.error || 'Failed to cancel build' });
           }
           break;
         }
 
         case 'retry_build': {
           const { projectId, modifications } = parsedArgs;
-          const response = await fetch(`/api/build/${projectId}/retry`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modifications }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; newProjectId?: string; error?: string }>(
+            `/api/build/${projectId}/retry`,
+            { modifications },
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             // Subscribe to the new build progress
-            subscribeToBuildProgress(data.newProjectId, modifications || 'Retried project');
+            subscribeToBuildProgress(fetchResult.data.newProjectId!, modifications || 'Retried project');
             result = JSON.stringify({
               success: true,
-              message: `Retry started! New build ID: ${data.newProjectId}. I'll keep you updated on the progress.`,
-              newProjectId: data.newProjectId,
+              message: `Retry started! New build ID: ${fetchResult.data.newProjectId}. I'll keep you updated on the progress.`,
+              newProjectId: fetchResult.data.newProjectId,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to retry build' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to retry build' });
           }
           break;
         }
@@ -825,27 +834,33 @@ export default function Home() {
           let targetProjectId = parsedArgs.projectId;
           // If no project ID, get the most recent completed project
           if (!targetProjectId) {
-            const projectsRes = await fetch('/api/build/projects');
-            const projectsData = await projectsRes.json();
-            const completedBuild = projectsData.projects?.find((p: { status: string }) => p.status === 'complete');
-            targetProjectId = completedBuild?.id;
+            const projectsResult = await getWithRetry<{
+              success: boolean;
+              projects?: Array<{ id: string; status: string }>;
+            }>('/api/build/projects', { timeout: timeouts.buildStatus });
+            if (projectsResult.success && projectsResult.data?.projects) {
+              const completedBuild = projectsResult.data.projects.find((p) => p.status === 'complete');
+              targetProjectId = completedBuild?.id;
+            }
           }
           if (!targetProjectId) {
             result = JSON.stringify({ success: false, error: 'No completed project found to open' });
           } else {
-            const statusRes = await fetch(`/api/build/${targetProjectId}/status`);
-            const statusData = await statusRes.json();
-            if (statusData.success && statusData.project?.localPort) {
+            const statusResult = await getWithRetry<{
+              success: boolean;
+              project?: { localPort?: number; deployUrl?: string };
+            }>(`/api/build/${targetProjectId}/status`, { timeout: timeouts.buildStatus });
+            if (statusResult.success && statusResult.data?.success && statusResult.data.project?.localPort) {
               result = JSON.stringify({
                 success: true,
-                message: `The project is running at http://localhost:${statusData.project.localPort}. You can open it in your browser.`,
-                url: `http://localhost:${statusData.project.localPort}`,
+                message: `The project is running at http://localhost:${statusResult.data.project.localPort}. You can open it in your browser.`,
+                url: `http://localhost:${statusResult.data.project.localPort}`,
               });
-            } else if (statusData.project?.deployUrl) {
+            } else if (statusResult.data?.project?.deployUrl) {
               result = JSON.stringify({
                 success: true,
-                message: `The project is deployed at ${statusData.project.deployUrl}`,
-                url: statusData.project.deployUrl,
+                message: `The project is deployed at ${statusResult.data.project.deployUrl}`,
+                url: statusResult.data.project.deployUrl,
               });
             } else {
               result = JSON.stringify({ success: false, error: 'Project is not currently running' });
@@ -856,36 +871,40 @@ export default function Home() {
 
         case 'describe_project': {
           const { projectId } = parsedArgs;
-          const response = await fetch(`/api/build/${projectId}/describe`);
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await getWithRetry<{
+            success: boolean;
+            summary?: string;
+            files?: Array<unknown>;
+            readme?: string;
+            error?: string;
+          }>(`/api/build/${projectId}/describe`, { timeout: timeouts.buildStatus });
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              summary: data.summary,
-              files: data.files?.slice(0, 15),
-              readme: data.readme?.slice(0, 500),
+              summary: fetchResult.data.summary,
+              files: fetchResult.data.files?.slice(0, 15),
+              readme: fetchResult.data.readme?.slice(0, 500),
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to describe project' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to describe project' });
           }
           break;
         }
 
         case 'respond_to_build': {
           const { projectId, response: userResponse } = parsedArgs;
-          const apiResponse = await fetch(`/api/build/${projectId}/respond`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response: userResponse }),
-          });
-          const data = await apiResponse.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            `/api/build/${projectId}/respond`,
+            { response: userResponse },
+            { timeout: timeouts.buildStatus }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: `Response sent to the build. Continuing with: "${userResponse}"`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to send response' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to send response' });
           }
           break;
         }
@@ -893,13 +912,16 @@ export default function Home() {
         case 'get_pending_question': {
           const { projectId } = parsedArgs;
           if (projectId) {
-            const response = await fetch(`/api/build/${projectId}/respond`);
-            const data = await response.json();
-            if (data.success && data.hasActiveSession && data.session?.pendingQuestion) {
+            const fetchResult = await getWithRetry<{
+              success: boolean;
+              hasActiveSession?: boolean;
+              session?: { pendingQuestion?: string };
+            }>(`/api/build/${projectId}/respond`, { timeout: timeouts.buildStatus });
+            if (fetchResult.success && fetchResult.data?.success && fetchResult.data.hasActiveSession && fetchResult.data.session?.pendingQuestion) {
               result = JSON.stringify({
                 success: true,
                 hasPendingQuestion: true,
-                question: data.session.pendingQuestion,
+                question: fetchResult.data.session.pendingQuestion,
                 projectId,
               });
             } else {
@@ -911,20 +933,25 @@ export default function Home() {
             }
           } else {
             // Check all active builds for pending questions
-            const projectsRes = await fetch('/api/build/projects');
-            const projectsData = await projectsRes.json();
-            const activeProjects = projectsData.projects?.filter((p: { status: string }) =>
+            const projectsResult = await getWithRetry<{
+              success: boolean;
+              projects?: Array<{ id: string; status: string; description: string }>;
+            }>('/api/build/projects', { timeout: timeouts.buildStatus });
+            const activeProjects = projectsResult.data?.projects?.filter((p) =>
               ['building', 'planning', 'testing'].includes(p.status)
             ) || [];
 
             for (const project of activeProjects) {
-              const response = await fetch(`/api/build/${project.id}/respond`);
-              const data = await response.json();
-              if (data.success && data.hasActiveSession && data.session?.pendingQuestion) {
+              const respondResult = await getWithRetry<{
+                success: boolean;
+                hasActiveSession?: boolean;
+                session?: { pendingQuestion?: string };
+              }>(`/api/build/${project.id}/respond`, { timeout: timeouts.buildStatus });
+              if (respondResult.success && respondResult.data?.success && respondResult.data.hasActiveSession && respondResult.data.session?.pendingQuestion) {
                 result = JSON.stringify({
                   success: true,
                   hasPendingQuestion: true,
-                  question: data.session.pendingQuestion,
+                  question: respondResult.data.session.pendingQuestion,
                   projectId: project.id,
                   projectDescription: project.description,
                 });
