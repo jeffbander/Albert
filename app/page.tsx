@@ -1173,69 +1173,53 @@ export default function Home() {
         }
 
         // ============================================
-        // Gmail Email Tools
+        // Gmail Email Tools (using postWithRetry for reliability)
         // ============================================
         case 'compose_email': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'compose',
-              to: parsedArgs.to,
-              subject: parsedArgs.subject,
-              body: parsedArgs.body,
-              cc: parsedArgs.cc,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; pendingId?: string; to?: string; subject?: string; bodyPreview?: string; error?: string }>(
+            '/api/gmail',
+            { action: 'compose', to: parsedArgs.to, subject: parsedArgs.subject, body: parsedArgs.body, cc: parsedArgs.cc },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              pendingId: data.pendingId,
-              message: `I've composed an email to ${data.to} with subject "${data.subject}". The message says: "${data.bodyPreview}..." Should I send it?`,
+              pendingId: fetchResult.data.pendingId,
+              message: `I've composed an email to ${fetchResult.data.to} with subject "${fetchResult.data.subject}". The message says: "${fetchResult.data.bodyPreview}..." Should I send it?`,
               requiresConfirmation: true,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to compose email' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to compose email' });
           }
           break;
         }
 
         case 'confirm_send_email': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'confirm_send',
-              pendingId: parsedArgs.pendingId,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; message?: string; error?: string }>(
+            '/api/gmail',
+            { action: 'confirm_send', pendingId: parsedArgs.pendingId },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: `Email sent successfully! ${data.message}`,
+              message: `Email sent successfully! ${fetchResult.data.message || ''}`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to send email' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to send email' });
           }
           break;
         }
 
         case 'read_emails': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'read',
-              query: parsedArgs.query,
-              maxResults: parsedArgs.maxResults || '5',
-            }),
-          });
-          const data = await response.json();
-          if (data.success && data.emails) {
-            const emails = Array.isArray(data.emails) ? data.emails : [];
-            const emailSummaries = emails.slice(0, 5).map((e: { from?: string; subject?: string; snippet?: string; id?: string }) =>
+          const fetchResult = await postWithRetry<{ success: boolean; emails?: Array<{ from?: string; subject?: string; snippet?: string; id?: string }>; error?: string }>(
+            '/api/gmail',
+            { action: 'read', query: parsedArgs.query, maxResults: parsedArgs.maxResults || '5' },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.emails) {
+            const emails = Array.isArray(fetchResult.data.emails) ? fetchResult.data.emails : [];
+            const emailSummaries = emails.slice(0, 5).map((e) =>
               `From: ${e.from || 'Unknown'}, Subject: "${e.subject || 'No subject'}", Preview: ${(e.snippet || '').slice(0, 50)}...`
             ).join(' | ');
             result = JSON.stringify({
@@ -1244,23 +1228,19 @@ export default function Home() {
               emails: emails.slice(0, 5),
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to read emails' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to read emails' });
           }
           break;
         }
 
         case 'read_email_content': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'read_one',
-              messageId: parsedArgs.messageId,
-            }),
-          });
-          const data = await response.json();
-          if (data.success && data.email) {
-            const email = data.email;
+          const fetchResult = await postWithRetry<{ success: boolean; email?: { from?: string; subject?: string; body?: string }; error?: string }>(
+            '/api/gmail',
+            { action: 'read_one', messageId: parsedArgs.messageId },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.email) {
+            const email = fetchResult.data.email;
             result = JSON.stringify({
               success: true,
               from: email.from,
@@ -1269,76 +1249,60 @@ export default function Home() {
               message: `Email from ${email.from}: ${(email.body || '').slice(0, 500)}`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to read email' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to read email' });
           }
           break;
         }
 
         case 'search_emails': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'search',
-              query: parsedArgs.query,
-              maxResults: parsedArgs.maxResults || '10',
-            }),
-          });
-          const data = await response.json();
-          if (data.success && data.emails) {
-            const emails = Array.isArray(data.emails) ? data.emails : [];
+          const fetchResult = await postWithRetry<{ success: boolean; emails?: Array<{ from?: string; subject?: string; snippet?: string; id?: string }>; error?: string }>(
+            '/api/gmail',
+            { action: 'search', query: parsedArgs.query, maxResults: parsedArgs.maxResults || '10' },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.emails) {
+            const emails = Array.isArray(fetchResult.data.emails) ? fetchResult.data.emails : [];
             result = JSON.stringify({
               success: true,
               message: `Found ${emails.length} email${emails.length !== 1 ? 's' : ''} matching "${parsedArgs.query}".`,
               emails: emails.slice(0, 10),
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Search failed' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Search failed' });
           }
           break;
         }
 
         case 'draft_email': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'draft',
-              to: parsedArgs.to,
-              subject: parsedArgs.subject,
-              body: parsedArgs.body,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            '/api/gmail',
+            { action: 'draft', to: parsedArgs.to, subject: parsedArgs.subject, body: parsedArgs.body },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: `Draft created for ${parsedArgs.to}. Subject: "${parsedArgs.subject}". You can find it in your Drafts folder.`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to create draft' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to create draft' });
           }
           break;
         }
 
         case 'reply_to_email': {
-          const response = await fetch('/api/gmail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'reply',
-              messageId: parsedArgs.messageId,
-              body: parsedArgs.body,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            '/api/gmail',
+            { action: 'reply', messageId: parsedArgs.messageId, body: parsedArgs.body },
+            { timeout: timeouts.gmailOperation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: 'Reply sent successfully.',
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to send reply' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to send reply' });
           }
           break;
         }
