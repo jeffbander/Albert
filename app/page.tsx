@@ -943,108 +943,120 @@ export default function Home() {
           break;
         }
 
-        // Browser control tools
+        // Browser control tools (using postWithRetry for reliability)
         case 'open_browser': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'open', url: parsedArgs.url }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; url?: string; title?: string; error?: string; voiceMessage?: string }>(
+            '/api/browser',
+            { action: 'open', url: parsedArgs.url },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: `I've opened ${data.url}. The page title is "${data.title}".`,
-              url: data.url,
-              title: data.title,
+              message: fetchResult.data.voiceMessage || `I've opened ${fetchResult.data.url}. The page title is "${fetchResult.data.title}".`,
+              url: fetchResult.data.url,
+              title: fetchResult.data.title,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to open browser' });
+            const errorMsg = fetchResult.data?.voiceMessage || fetchResult.data?.error || fetchResult.error || 'Failed to open browser';
+            result = JSON.stringify({ success: false, error: errorMsg });
           }
           break;
         }
 
         case 'browser_screenshot': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'screenshot' }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; title?: string; url?: string; error?: string; voiceMessage?: string }>(
+            '/api/browser',
+            { action: 'screenshot' },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: `I can see the page "${data.title}" at ${data.url}. Let me describe what I see on the page.`,
-              title: data.title,
-              url: data.url,
+              message: fetchResult.data.voiceMessage || `I can see the page "${fetchResult.data.title}" at ${fetchResult.data.url}. Let me describe what I see on the page.`,
+              title: fetchResult.data.title,
+              url: fetchResult.data.url,
               hasScreenshot: true,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to take screenshot' });
+            const errorMsg = fetchResult.data?.voiceMessage || fetchResult.data?.error || fetchResult.error || 'Failed to take screenshot';
+            result = JSON.stringify({ success: false, error: errorMsg });
           }
           break;
         }
 
         case 'browser_click': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'click', selector: parsedArgs.selector }),
-          });
-          const data = await response.json();
-          result = JSON.stringify(data);
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string; voiceMessage?: string }>(
+            '/api/browser',
+            { action: 'click', selector: parsedArgs.selector },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data) {
+            result = JSON.stringify(fetchResult.data);
+          } else {
+            result = JSON.stringify({ success: false, error: fetchResult.data?.voiceMessage || fetchResult.error || 'Click failed' });
+          }
           break;
         }
 
         case 'browser_type': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'type', selector: parsedArgs.selector, text: parsedArgs.text }),
-          });
-          const data = await response.json();
-          result = JSON.stringify(data);
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string; voiceMessage?: string }>(
+            '/api/browser',
+            { action: 'type', selector: parsedArgs.selector, text: parsedArgs.text },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data) {
+            result = JSON.stringify(fetchResult.data);
+          } else {
+            result = JSON.stringify({ success: false, error: fetchResult.data?.voiceMessage || fetchResult.error || 'Type failed' });
+          }
           break;
         }
 
         case 'browser_scroll': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'scroll', direction: parsedArgs.direction, amount: parsedArgs.amount }),
-          });
-          const data = await response.json();
-          result = JSON.stringify(data);
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string; voiceMessage?: string }>(
+            '/api/browser',
+            { action: 'scroll', direction: parsedArgs.direction, amount: parsedArgs.amount },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data) {
+            result = JSON.stringify(fetchResult.data);
+          } else {
+            result = JSON.stringify({ success: false, error: fetchResult.data?.voiceMessage || fetchResult.error || 'Scroll failed' });
+          }
           break;
         }
 
         case 'close_browser': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'close' }),
-          });
-          const data = await response.json();
-          result = JSON.stringify(data);
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            '/api/browser',
+            { action: 'close' },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data) {
+            result = JSON.stringify(fetchResult.data);
+          } else {
+            result = JSON.stringify({ success: false, error: fetchResult.error || 'Failed to close browser' });
+          }
           break;
         }
 
         case 'get_page_content': {
-          const response = await fetch('/api/browser', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'get_text' }),
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await postWithRetry<{ success: boolean; text?: string; title?: string; url?: string; error?: string; voiceMessage?: string }>(
+            '/api/browser',
+            { action: 'get_text' },
+            { timeout: timeouts.browserNavigation }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              title: data.title,
-              url: data.url,
-              content: data.text?.slice(0, 2000), // Limit for voice response
+              title: fetchResult.data.title,
+              url: fetchResult.data.url,
+              content: fetchResult.data.text?.slice(0, 2000), // Limit for voice response
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error });
+            const errorMsg = fetchResult.data?.voiceMessage || fetchResult.data?.error || fetchResult.error || 'Failed to get page content';
+            result = JSON.stringify({ success: false, error: errorMsg });
           }
           break;
         }
