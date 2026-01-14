@@ -69,6 +69,14 @@ export default function Home() {
   const speakerIdRef = useRef<string | null>(null);
   const pendingFunctionCallRef = useRef<{ callId: string; name: string; arguments: string } | null>(null);
 
+  // Pending results queue for when data channel is not available
+  interface PendingResult {
+    callId: string;
+    result: string;
+    timestamp: number;
+  }
+  const pendingResultsQueueRef = useRef<PendingResult[]>([]);
+
   // Build progress tracking
   const activeBuildIdRef = useRef<string | null>(null);
   const lastNotifiedPhaseRef = useRef<string | null>(null);
@@ -158,6 +166,76 @@ export default function Home() {
     setIsConnected(false);
     setState('idle');
     // Don't clear chat messages - keep them visible after disconnect
+  }, []);
+
+  // Send function result to data channel, or queue if channel is not available
+  const sendFunctionResult = useCallback((callId: string, result: string) => {
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      // Channel is open, send immediately
+      dcRef.current.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: callId,
+          output: result,
+        },
+      }));
+      dcRef.current.send(JSON.stringify({
+        type: 'response.create',
+      }));
+      console.log(`[DataChannel] Sent function result for ${callId}`);
+    } else {
+      // Channel not available, queue the result
+      console.warn(`[DataChannel] Channel not open (state: ${dcRef.current?.readyState || 'null'}), queueing result for ${callId}`);
+      pendingResultsQueueRef.current.push({
+        callId,
+        result,
+        timestamp: Date.now(),
+      });
+    }
+  }, []);
+
+  // Flush pending results queue when channel becomes available
+  const flushPendingResults = useCallback(() => {
+    if (pendingResultsQueueRef.current.length === 0) return;
+
+    console.log(`[DataChannel] Flushing ${pendingResultsQueueRef.current.length} pending results`);
+
+    // Filter out stale results (older than 2 minutes)
+    const now = Date.now();
+    const maxAge = 2 * 60 * 1000;
+    const validResults = pendingResultsQueueRef.current.filter(
+      r => now - r.timestamp < maxAge
+    );
+
+    if (validResults.length < pendingResultsQueueRef.current.length) {
+      console.warn(`[DataChannel] Dropped ${pendingResultsQueueRef.current.length - validResults.length} stale results`);
+    }
+
+    // Send valid results
+    for (const pending of validResults) {
+      if (dcRef.current && dcRef.current.readyState === 'open') {
+        dcRef.current.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: pending.callId,
+            output: pending.result,
+          },
+        }));
+        console.log(`[DataChannel] Delivered queued result for ${pending.callId}`);
+      }
+    }
+
+    // Request a single response for all the results
+    if (validResults.length > 0 && dcRef.current && dcRef.current.readyState === 'open') {
+      dcRef.current.send(JSON.stringify({
+        type: 'response.create',
+      }));
+    }
+
+    // Clear the queue
+    pendingResultsQueueRef.current = [];
   }, []);
 
   // Identify speaker from audio stream
@@ -321,6 +399,9 @@ export default function Home() {
 
         setIsConnected(true);
         setState('listening');
+
+        // Flush any pending results from previous session
+        flushPendingResults();
       };
 
       dc.onclose = () => {
@@ -1628,24 +1709,9 @@ export default function Home() {
       result = JSON.stringify({ error: err instanceof Error ? err.message : 'Function execution failed' });
     }
 
-    // Send the function result back to the conversation
-    if (dcRef.current && dcRef.current.readyState === 'open') {
-      // First, create a function call output item
-      dcRef.current.send(JSON.stringify({
-        type: 'conversation.item.create',
-        item: {
-          type: 'function_call_output',
-          call_id: callId,
-          output: result,
-        },
-      }));
-
-      // Then request a response so Albert speaks the result
-      dcRef.current.send(JSON.stringify({
-        type: 'response.create',
-      }));
-    }
-  }, [subscribeToBuildProgress, subscribeToResearchProgress]);
+    // Send the function result back to the conversation (or queue if channel not available)
+    sendFunctionResult(callId, result);
+  }, [subscribeToBuildProgress, subscribeToResearchProgress, sendFunctionResult]);
 
   // Handle realtime events from OpenAI
   const handleRealtimeEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
