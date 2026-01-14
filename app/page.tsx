@@ -20,6 +20,10 @@ import {
   shouldNotifyVoiceResearch,
 } from '@/lib/researchProgressManager';
 import { onClarificationRequest } from '@/lib/interactiveSession';
+import { postWithRetry } from '@/lib/utils/fetchWithRetry';
+import { formatForVoice, formatErrorForVoice } from '@/lib/utils/voiceFormatter';
+import { circuitBreakers } from '@/lib/utils/circuitBreaker';
+import { timeouts } from '@/lib/config';
 import type { BuildProgressEvent } from '@/types/build';
 import type { ResearchProgressEvent, ResearchPhase } from '@/types/research';
 
@@ -1302,114 +1306,170 @@ export default function Home() {
 
         // Research Tools (Perplexity AI powered)
         case 'start_research': {
-          const response = await fetch('/api/research', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'start_research',
-              topic: parsedArgs.topic,
-              searchRecency: parsedArgs.searchRecency,
-            }),
+          // Check circuit breaker before making request
+          if (!circuitBreakers.perplexity.isAvailable()) {
+            result = JSON.stringify({
+              success: false,
+              error: 'Research service temporarily unavailable',
+              message: 'The research service is temporarily unavailable. Please try again in a minute.',
+            });
+            break;
+          }
+
+          const { success, data, error } = await postWithRetry<{
+            success: boolean;
+            sessionId?: string;
+            answer?: string;
+            citations?: string[];
+            error?: string;
+          }>('/api/research', {
+            action: 'start_research',
+            topic: parsedArgs.topic,
+            searchRecency: parsedArgs.searchRecency,
+          }, {
+            timeout: timeouts.perplexityResearch,
+            retries: 2,
           });
-          const data = await response.json();
-          if (data.success) {
-            // Format citations for voice response
-            const citationSummary = data.citations?.length
-              ? ` Found ${data.citations.length} sources.`
-              : '';
+
+          if (success && data?.success) {
+            circuitBreakers.perplexity.onSuccess();
+            // Format response for voice output
+            const voiceResponse = formatForVoice(
+              data.answer || '',
+              data.citations || [],
+              { maxLength: 1200, includeCitations: true }
+            );
             result = JSON.stringify({
               success: true,
               sessionId: data.sessionId,
               answer: data.answer,
               citations: data.citations,
-              message: `Here's what I found about "${parsedArgs.topic}":${citationSummary}\n\n${data.answer}`,
+              message: `Here's what I found about "${parsedArgs.topic}": ${voiceResponse.spoken}`,
             });
           } else {
+            circuitBreakers.perplexity.onFailure();
+            const errorMsg = error || data?.error || 'Failed to start research';
             result = JSON.stringify({
               success: false,
-              error: data.error,
-              message: data.error || 'Failed to start research.',
+              error: errorMsg,
+              message: formatErrorForVoice(errorMsg, 'Would you like me to try again?'),
             });
           }
           break;
         }
 
         case 'ask_research': {
-          const response = await fetch('/api/research', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'ask_question',
-              question: parsedArgs.question,
-            }),
+          const { success, data, error } = await postWithRetry<{
+            success: boolean;
+            answer?: string;
+            citations?: string[];
+            error?: string;
+          }>('/api/research', {
+            action: 'ask_question',
+            question: parsedArgs.question,
+          }, {
+            timeout: timeouts.perplexityResearch,
+            retries: 2,
           });
-          const data = await response.json();
-          if (data.success) {
+
+          if (success && data?.success) {
+            circuitBreakers.perplexity.onSuccess();
+            const voiceResponse = formatForVoice(
+              data.answer || '',
+              data.citations || [],
+              { maxLength: 1200 }
+            );
             result = JSON.stringify({
               success: true,
               answer: data.answer,
               citations: data.citations,
-              message: data.answer,
+              message: voiceResponse.spoken,
             });
           } else {
+            circuitBreakers.perplexity.onFailure();
             result = JSON.stringify({
               success: false,
-              message: data.error || 'Failed to get answer.',
+              message: formatErrorForVoice(error || data?.error || 'Failed to get answer'),
             });
           }
           break;
         }
 
         case 'get_research_summary': {
-          const response = await fetch('/api/research', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'get_summary',
-              focusArea: parsedArgs.focusArea,
-            }),
+          const { success, data, error } = await postWithRetry<{
+            success: boolean;
+            summary?: string;
+            citations?: string[];
+            error?: string;
+          }>('/api/research', {
+            action: 'get_summary',
+            focusArea: parsedArgs.focusArea,
+          }, {
+            timeout: timeouts.perplexityResearch,
+            retries: 2,
           });
-          const data = await response.json();
-          if (data.success) {
+
+          if (success && data?.success) {
+            const voiceResponse = formatForVoice(
+              data.summary || '',
+              data.citations || [],
+              { maxLength: 1200 }
+            );
             result = JSON.stringify({
               success: true,
               summary: data.summary,
               citations: data.citations,
-              message: data.summary,
+              message: voiceResponse.spoken,
             });
           } else {
             result = JSON.stringify({
               success: false,
-              message: data.error || 'Failed to get summary.',
+              message: formatErrorForVoice(error || data?.error || 'Failed to get summary'),
             });
           }
           break;
         }
 
         case 'get_news': {
-          const response = await fetch('/api/research', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'get_news',
-              topic: parsedArgs.topic,
-            }),
+          if (!circuitBreakers.perplexity.isAvailable()) {
+            result = JSON.stringify({
+              success: false,
+              message: 'News service temporarily unavailable. Please try again in a minute.',
+            });
+            break;
+          }
+
+          const { success, data, error } = await postWithRetry<{
+            success: boolean;
+            news?: string;
+            citations?: string[];
+            error?: string;
+          }>('/api/research', {
+            action: 'get_news',
+            topic: parsedArgs.topic,
+          }, {
+            timeout: timeouts.perplexityNews,
+            retries: 2,
           });
-          const data = await response.json();
-          if (data.success) {
-            const citationSummary = data.citations?.length
-              ? ` (${data.citations.length} sources)`
-              : '';
+
+          if (success && data?.success) {
+            circuitBreakers.perplexity.onSuccess();
+            const voiceResponse = formatForVoice(
+              data.news || '',
+              data.citations || [],
+              { maxLength: 1200 }
+            );
             result = JSON.stringify({
               success: true,
               news: data.news,
               citations: data.citations,
-              message: `Latest news on "${parsedArgs.topic}"${citationSummary}:\n\n${data.news}`,
+              message: `Latest news on "${parsedArgs.topic}": ${voiceResponse.spoken}`,
             });
           } else {
+            circuitBreakers.perplexity.onFailure();
             result = JSON.stringify({
               success: false,
-              message: data.error || 'Failed to get news.',
+              message: formatErrorForVoice(error || data?.error || 'Failed to get news'),
             });
           }
           break;
