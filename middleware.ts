@@ -36,13 +36,11 @@ export const config = {
     // Protect build/deployment routes
     '/api/build/:path*',
 
-    // Protect self-improvement routes
+    // Protect self-improvement routes (writing code changes)
     '/api/self-improve/:path*',
 
-    // Protect codebase routes
-    '/api/codebase/:path*',
-
-    // The following routes use PasscodeGate client-side auth:
+    // The following routes are open for voice tools (with their own security):
+    // - /api/codebase/* (read-only, has ALLOWED_DIRS restriction)
     // - /api/browser/* (voice tool browser control)
     // - /api/notebooklm/* (voice tool research)
     // - /api/memory/* (voice tool memory)
