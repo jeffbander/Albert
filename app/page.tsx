@@ -20,7 +20,7 @@ import {
   shouldNotifyVoiceResearch,
 } from '@/lib/researchProgressManager';
 import { onClarificationRequest } from '@/lib/interactiveSession';
-import { postWithRetry, getWithRetry } from '@/lib/utils/fetchWithRetry';
+import { postWithRetry, getWithRetry, fetchWithRetry } from '@/lib/utils/fetchWithRetry';
 import { formatForVoice, formatErrorForVoice } from '@/lib/utils/voiceFormatter';
 import { circuitBreakers } from '@/lib/utils/circuitBreaker';
 import { timeouts } from '@/lib/config';
@@ -1644,10 +1644,13 @@ export default function Home() {
 
         case 'list_skills': {
           const activeOnly = parsedArgs.activeOnly === 'true';
-          const response = await fetch(`/api/skills?activeOnly=${activeOnly}`);
-          const data = await response.json();
-          if (data.success && data.data) {
-            const skills = data.data.skills || [];
+          const fetchResult = await getWithRetry<{
+            success: boolean;
+            data?: { skills?: Array<{ name: string; triggers: string[] }> };
+            error?: string;
+          }>(`/api/skills?activeOnly=${activeOnly}`, { timeout: timeouts.defaultFetch });
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.data) {
+            const skills = fetchResult.data.data.skills || [];
             if (skills.length === 0) {
               result = JSON.stringify({
                 success: true,
@@ -1655,7 +1658,7 @@ export default function Home() {
                 message: "You don't have any saved skills yet. Would you like to create one? Just describe a workflow you'd like to automate.",
               });
             } else {
-              const skillList = skills.map((s: { name: string; triggers: string[] }) =>
+              const skillList = skills.map((s) =>
                 `"${s.name}" (say: "${s.triggers[0] || s.name}")`
               ).join(', ');
               result = JSON.stringify({
@@ -1666,58 +1669,63 @@ export default function Home() {
               });
             }
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to list skills' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to list skills' });
           }
           break;
         }
 
         case 'execute_skill': {
           const inputData = parsedArgs.inputData ? JSON.parse(parsedArgs.inputData) : {};
-          const response = await fetch(`/api/skills/${encodeURIComponent(parsedArgs.skillId)}/execute`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ inputData }),
-          });
-          const data = await response.json();
-          if (data.success && data.data) {
+          const fetchResult = await postWithRetry<{
+            success: boolean;
+            data?: { executionId?: string; skillName?: string; message?: string };
+            error?: string;
+          }>(
+            `/api/skills/${encodeURIComponent(parsedArgs.skillId)}/execute`,
+            { inputData },
+            { timeout: timeouts.buildStart }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.data) {
             result = JSON.stringify({
               success: true,
-              executionId: data.data.executionId,
-              message: `Starting "${data.data.skillName}". ${data.data.message}`,
+              executionId: fetchResult.data.data.executionId,
+              message: `Starting "${fetchResult.data.data.skillName}". ${fetchResult.data.data.message}`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to execute skill' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to execute skill' });
           }
           break;
         }
 
         case 'get_skill_status': {
           // For now, just check the most recent execution
-          const response = await fetch('/api/skills');
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await getWithRetry<{ success: boolean; error?: string }>(
+            '/api/skills',
+            { timeout: timeouts.defaultFetch }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: 'Skill status check completed. The execution engine is ready.',
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to check skill status' });
           }
           break;
         }
 
         case 'delete_skill': {
-          const response = await fetch(`/api/skills/${encodeURIComponent(parsedArgs.skillId)}`, {
-            method: 'DELETE',
-          });
-          const data = await response.json();
-          if (data.success) {
+          const fetchResult = await fetchWithRetry<{ success: boolean; message?: string; error?: string }>(
+            `/api/skills/${encodeURIComponent(parsedArgs.skillId)}`,
+            { method: 'DELETE', timeout: timeouts.defaultFetch }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
-              message: data.message || `Deleted the skill. It's been removed from your saved workflows.`,
+              message: fetchResult.data.message || `Deleted the skill. It's been removed from your saved workflows.`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to delete skill' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to delete skill' });
           }
           break;
         }
