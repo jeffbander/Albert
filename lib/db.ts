@@ -6,6 +6,15 @@ import type {
   ProjectType,
   DeployTarget,
 } from '@/types/build';
+import type {
+  TaskMemory,
+  TaskType,
+  TaskStatus,
+  CreateTaskInput,
+  UpdateTaskInput,
+  MemoryEffectiveness,
+} from './db/schema';
+import { parseTaskMemoryRow, parseMemoryEffectivenessRow } from './db/schema';
 
 let dbClient: Client | null = null;
 
@@ -3140,5 +3149,266 @@ export async function cleanupOldExecutions(maxAgeDays: number = 30): Promise<num
   });
   return result.rowsAffected;
 }
+
+// ============================================
+// Task Memory Functions
+// ============================================
+
+export async function createTask(input: CreateTaskInput): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  await db.execute({
+    sql: `INSERT INTO task_memory (id, conversation_id, user_id, task_description, task_type, subtasks, priority, parent_task_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      input.conversationId || null,
+      input.userId || 'default-voice-user',
+      input.taskDescription,
+      input.taskType || 'general',
+      input.subtasks ? JSON.stringify(input.subtasks) : null,
+      input.priority || 0,
+      input.parentTaskId || null,
+    ],
+  });
+
+  return id;
+}
+
+export async function updateTask(taskId: string, updates: UpdateTaskInput): Promise<void> {
+  const db = getDb();
+  const setClauses: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const args: (string | number | null)[] = [];
+
+  if (updates.status !== undefined) {
+    setClauses.push('status = ?');
+    args.push(updates.status);
+    if (updates.status === 'completed' || updates.status === 'failed' || updates.status === 'cancelled') {
+      setClauses.push('completed_at = CURRENT_TIMESTAMP');
+    }
+  }
+  if (updates.subtasks !== undefined) {
+    setClauses.push('subtasks = ?');
+    args.push(JSON.stringify(updates.subtasks));
+  }
+  if (updates.completedSubtasks !== undefined) {
+    setClauses.push('completed_subtasks = ?');
+    args.push(JSON.stringify(updates.completedSubtasks));
+  }
+  if (updates.blockers !== undefined) {
+    setClauses.push('blockers = ?');
+    args.push(JSON.stringify(updates.blockers));
+  }
+  if (updates.context !== undefined) {
+    setClauses.push('context = ?');
+    args.push(updates.context);
+  }
+  if (updates.toolsUsed !== undefined) {
+    setClauses.push('tools_used = ?');
+    args.push(JSON.stringify(updates.toolsUsed));
+  }
+  if (updates.errorMessage !== undefined) {
+    setClauses.push('error_message = ?');
+    args.push(updates.errorMessage);
+  }
+
+  args.push(taskId);
+
+  await db.execute({
+    sql: `UPDATE task_memory SET ${setClauses.join(', ')} WHERE id = ?`,
+    args,
+  });
+}
+
+export async function getTask(taskId: string): Promise<TaskMemory | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM task_memory WHERE id = ?',
+    args: [taskId],
+  });
+
+  if (result.rows.length === 0) return null;
+  return parseTaskMemoryRow(result.rows[0] as Record<string, unknown>);
+}
+
+export async function getActiveTasks(userId: string = 'default-voice-user'): Promise<TaskMemory[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM task_memory
+          WHERE user_id = ? AND status IN ('pending', 'in_progress', 'blocked')
+          ORDER BY priority DESC, started_at ASC`,
+    args: [userId],
+  });
+
+  return result.rows.map(row => parseTaskMemoryRow(row as Record<string, unknown>));
+}
+
+export async function getRecentTasks(userId: string = 'default-voice-user', limit: number = 10): Promise<TaskMemory[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM task_memory
+          WHERE user_id = ?
+          ORDER BY updated_at DESC
+          LIMIT ?`,
+    args: [userId, limit],
+  });
+
+  return result.rows.map(row => parseTaskMemoryRow(row as Record<string, unknown>));
+}
+
+export async function getTasksByConversation(conversationId: string): Promise<TaskMemory[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM task_memory WHERE conversation_id = ? ORDER BY started_at ASC',
+    args: [conversationId],
+  });
+
+  return result.rows.map(row => parseTaskMemoryRow(row as Record<string, unknown>));
+}
+
+export async function getIncompleteTasksSummary(userId: string = 'default-voice-user'): Promise<string> {
+  const tasks = await getActiveTasks(userId);
+  if (tasks.length === 0) return '';
+
+  const lines = ['Incomplete tasks from previous sessions:'];
+  for (const task of tasks) {
+    const statusEmoji = task.status === 'blocked' ? '🚫' : task.status === 'in_progress' ? '🔄' : '⏳';
+    lines.push(`${statusEmoji} ${task.taskDescription}`);
+    if (task.blockers && task.blockers.length > 0) {
+      lines.push(`   Blocked by: ${task.blockers.join(', ')}`);
+    }
+    if (task.subtasks && task.completedSubtasks) {
+      const remaining = task.subtasks.length - task.completedSubtasks.length;
+      if (remaining > 0) {
+        lines.push(`   ${remaining} subtasks remaining`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: 'DELETE FROM task_memory WHERE id = ?',
+    args: [taskId],
+  });
+}
+
+// ============================================
+// Memory Effectiveness Functions
+// ============================================
+
+export async function recordMemoryUsage(
+  memoryIds: string[],
+  conversationId?: string
+): Promise<string> {
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  await db.execute({
+    sql: `INSERT INTO memory_usage_feedback (id, conversation_id, memory_ids) VALUES (?, ?, ?)`,
+    args: [id, conversationId || null, JSON.stringify(memoryIds)],
+  });
+
+  // Update retrieval counts
+  for (const memoryId of memoryIds) {
+    await db.execute({
+      sql: `INSERT INTO memory_effectiveness (memory_id, times_retrieved, last_used)
+            VALUES (?, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(memory_id) DO UPDATE SET
+              times_retrieved = times_retrieved + 1,
+              last_used = CURRENT_TIMESTAMP`,
+      args: [memoryId],
+    });
+  }
+
+  return id;
+}
+
+export async function recordMemoryFeedback(
+  feedbackId: string,
+  rating: 'positive' | 'negative' | 'neutral',
+  taskCompleted: boolean,
+  feedbackText?: string
+): Promise<void> {
+  const db = getDb();
+
+  // Update the feedback record
+  await db.execute({
+    sql: `UPDATE memory_usage_feedback
+          SET response_rating = ?, task_completed = ?, feedback_text = ?
+          WHERE id = ?`,
+    args: [rating, taskCompleted ? 1 : 0, feedbackText || null, feedbackId],
+  });
+
+  // Get the memory IDs from this feedback
+  const result = await db.execute({
+    sql: 'SELECT memory_ids FROM memory_usage_feedback WHERE id = ?',
+    args: [feedbackId],
+  });
+
+  if (result.rows.length > 0) {
+    const memoryIds = JSON.parse(result.rows[0].memory_ids as string) as string[];
+
+    // Update effectiveness for each memory
+    for (const memoryId of memoryIds) {
+      const helpfulIncrement = rating === 'positive' ? 1 : 0;
+      const unhelpfulIncrement = rating === 'negative' ? 1 : 0;
+
+      await db.execute({
+        sql: `UPDATE memory_effectiveness
+              SET times_helpful = times_helpful + ?,
+                  times_unhelpful = times_unhelpful + ?,
+                  last_feedback = ?,
+                  effectiveness_score = CAST(times_helpful + ? AS REAL) / CAST(times_retrieved + 2 AS REAL)
+              WHERE memory_id = ?`,
+        args: [helpfulIncrement, unhelpfulIncrement, rating, helpfulIncrement, memoryId],
+      });
+    }
+  }
+}
+
+export async function getMemoryEffectiveness(memoryId: string): Promise<MemoryEffectiveness | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM memory_effectiveness WHERE memory_id = ?',
+    args: [memoryId],
+  });
+
+  if (result.rows.length === 0) return null;
+  return parseMemoryEffectivenessRow(result.rows[0] as Record<string, unknown>);
+}
+
+export async function getMostEffectiveMemoryIds(limit: number = 50): Promise<string[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT memory_id FROM memory_effectiveness
+          WHERE times_retrieved >= 2
+          ORDER BY effectiveness_score DESC
+          LIMIT ?`,
+    args: [limit],
+  });
+
+  return result.rows.map(row => row.memory_id as string);
+}
+
+export async function getLeastEffectiveMemoryIds(limit: number = 50): Promise<string[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT memory_id FROM memory_effectiveness
+          WHERE times_retrieved >= 3 AND effectiveness_score < 0.3
+          ORDER BY effectiveness_score ASC
+          LIMIT ?`,
+    args: [limit],
+  });
+
+  return result.rows.map(row => row.memory_id as string);
+}
+
+// Re-export task memory types for convenience
+export type { TaskMemory, TaskType, TaskStatus, CreateTaskInput, UpdateTaskInput, MemoryEffectiveness };
 
 export default getDb;

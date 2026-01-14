@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schema/mcp-config.json",
+  "description": "Example MCP configuration for Albert Memory Server",
+  "mcpServers": {
+    "albert-memory": {
+      "command": "npm",
+      "args": ["run", "mcp:memory"],
+      "cwd": "/path/to/Albert",
+      "env": {
+        "MEM0_API_KEY": "your-mem0-api-key"
+      }
+    }
+  }
+}
