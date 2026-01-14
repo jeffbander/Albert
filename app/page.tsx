@@ -1335,48 +1335,51 @@ export default function Home() {
         }
 
         // ============================================
-        // Contact Management Tools
+        // Contact Management Tools (using postWithRetry for reliability)
         // ============================================
         case 'add_contact': {
-          const response = await fetch('/api/contacts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const fetchResult = await postWithRetry<{ success: boolean; error?: string }>(
+            '/api/contacts',
+            {
               action: 'add',
               name: parsedArgs.name,
               email: parsedArgs.email,
               nickname: parsedArgs.nickname,
-            }),
-          });
-          const data = await response.json();
-          if (data.success) {
+            },
+            { timeout: timeouts.defaultFetch }
+          );
+          if (fetchResult.success && fetchResult.data?.success) {
             result = JSON.stringify({
               success: true,
               message: `Got it! I've saved ${parsedArgs.name}'s email as ${parsedArgs.email}. Next time you say "email ${parsedArgs.name}", I'll know who you mean.`,
             });
           } else {
-            result = JSON.stringify({ success: false, error: data.error || 'Failed to add contact' });
+            result = JSON.stringify({ success: false, error: fetchResult.data?.error || fetchResult.error || 'Failed to add contact' });
           }
           break;
         }
 
         case 'lookup_contact': {
-          const response = await fetch('/api/contacts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const fetchResult = await postWithRetry<{
+            success: boolean;
+            found?: boolean;
+            contact?: { name: string; email: string };
+            error?: string;
+          }>(
+            '/api/contacts',
+            {
               action: 'lookup',
               name: parsedArgs.name,
-            }),
-          });
-          const data = await response.json();
-          if (data.success && data.found) {
+            },
+            { timeout: timeouts.defaultFetch }
+          );
+          if (fetchResult.success && fetchResult.data?.success && fetchResult.data.found) {
             result = JSON.stringify({
               success: true,
               found: true,
-              name: data.contact.name,
-              email: data.contact.email,
-              message: `${data.contact.name}'s email is ${data.contact.email}.`,
+              name: fetchResult.data.contact!.name,
+              email: fetchResult.data.contact!.email,
+              message: `${fetchResult.data.contact!.name}'s email is ${fetchResult.data.contact!.email}.`,
             });
           } else {
             result = JSON.stringify({
