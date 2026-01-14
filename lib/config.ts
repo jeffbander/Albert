@@ -232,4 +232,45 @@ export function getBrowserConnectionUrl(): string {
   return `http://localhost:${config.browser.cdpPort}`;
 }
 
+/**
+ * Centralized timeout configuration
+ * All timeout values in milliseconds
+ */
+export const timeouts = {
+  // Voice/UI timeouts
+  silenceTimeout: 2 * 60 * 1000,        // 2 minutes before ending conversation
+  feedbackAutoHide: 10 * 1000,           // 10 seconds for feedback UI
+
+  // Network timeouts
+  defaultFetch: 30 * 1000,               // 30 seconds default
+  shortFetch: 10 * 1000,                 // 10 seconds for quick operations
+
+  // Browser automation timeouts
+  browserNavigation: 30 * 1000,          // 30 seconds for page load
+  browserConnection: 10 * 1000,          // 10 seconds to connect to Chrome
+  browserOperation: 15 * 1000,           // 15 seconds for click/type/scroll
+  browserScreenshot: 10 * 1000,          // 10 seconds for screenshot
+
+  // Build timeouts
+  buildStart: 60 * 1000,                 // 60 seconds to start build
+  buildStatus: 10 * 1000,                // 10 seconds for status check
+  buildDeploy: 180 * 1000,               // 3 minutes for deployment
+
+  // API timeouts
+  perplexityResearch: 45 * 1000,         // 45 seconds for research
+  perplexityNews: 30 * 1000,             // 30 seconds for news
+  gmailOperation: 15 * 1000,             // 15 seconds for email operations
+
+  // Retry configuration
+  retryDelay: 1000,                      // Base delay between retries (1s)
+  maxRetries: 3,                         // Default max retries
+} as const;
+
+/**
+ * Get timeout for a specific operation with optional override
+ */
+export function getTimeout(operation: keyof typeof timeouts, override?: number): number {
+  return override ?? timeouts[operation];
+}
+
 export default config;

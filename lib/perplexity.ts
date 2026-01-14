@@ -47,6 +47,8 @@ export interface ResearchOptions {
   systemPrompt?: string;
   returnCitations?: boolean;
   searchRecency?: 'day' | 'week' | 'month' | 'year';
+  /** Timeout in milliseconds (default: 45000 for research, 30000 for news) */
+  timeout?: number;
 }
 
 export interface ResearchResult {
@@ -104,9 +106,10 @@ export class PerplexityClient {
       systemPrompt,
       returnCitations = true,
       searchRecency,
+      timeout = 45000, // Default 45 seconds for research
     } = options;
 
-    this.log(`Research query: "${query}" with model: ${model}`);
+    this.log(`Research query: "${query}" with model: ${model}, timeout: ${timeout}ms`);
 
     const messages: PerplexityMessage[] = [];
 
@@ -142,6 +145,10 @@ export class PerplexityClient {
       requestBody.search_recency_filter = searchRecency;
     }
 
+    // Set up timeout using AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
     try {
       const response = await fetch(PERPLEXITY_API_URL, {
         method: 'POST',
@@ -150,7 +157,10 @@ export class PerplexityClient {
           'Authorization': `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(requestBody),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -176,6 +186,14 @@ export class PerplexityClient {
         } : undefined,
       };
     } catch (error) {
+      clearTimeout(timeoutId);
+
+      // Handle timeout specifically
+      if (error instanceof Error && error.name === 'AbortError') {
+        this.log('Research timed out after', timeout, 'ms');
+        throw new Error(`Research request timed out after ${Math.round(timeout / 1000)} seconds. The query may be too complex or the service is slow.`);
+      }
+
       this.log('Research failed:', error);
       throw error;
     }
@@ -198,6 +216,7 @@ export class PerplexityClient {
       maxTokens = 4096,
       temperature = 0.2,
       returnCitations = true,
+      timeout = 45000, // Default 45 seconds for follow-ups
     } = options;
 
     this.log(`Follow-up question: "${followUpQuestion}"`);
@@ -208,38 +227,55 @@ export class PerplexityClient {
       { role: 'user', content: followUpQuestion },
     ];
 
-    const response = await fetch(PERPLEXITY_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: maxTokens,
-        temperature,
-        return_citations: returnCitations,
-      }),
-    });
+    // Set up timeout using AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Perplexity API error: ${response.status} - ${errorText}`);
+    try {
+      const response = await fetch(PERPLEXITY_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          max_tokens: maxTokens,
+          temperature,
+          return_citations: returnCitations,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Perplexity API error: ${response.status} - ${errorText}`);
+      }
+
+      const data: PerplexityResponse = await response.json();
+
+      return {
+        answer: data.choices?.[0]?.message?.content || '',
+        citations: data.citations || [],
+        model: data.model,
+        usage: data.usage ? {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        } : undefined,
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Follow-up request timed out after ${Math.round(timeout / 1000)} seconds.`);
+      }
+
+      throw error;
     }
-
-    const data: PerplexityResponse = await response.json();
-
-    return {
-      answer: data.choices?.[0]?.message?.content || '',
-      citations: data.citations || [],
-      model: data.model,
-      usage: data.usage ? {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
-      } : undefined,
-    };
   }
 
   /**
@@ -268,6 +304,7 @@ Focus on recent developments, breaking news, and important updates. Always cite 
       systemPrompt,
       searchRecency: options.searchRecency || 'week',
       model: options.model || 'sonar',
+      timeout: options.timeout || 30000, // News queries use shorter 30s timeout
     });
   }
 

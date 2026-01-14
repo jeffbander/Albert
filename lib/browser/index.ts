@@ -231,3 +231,142 @@ export function detectBestProvider(): BrowserProviderConfig['type'] {
   }
   return 'local-cdp';
 }
+
+// ============================================
+// Browser Health Check System
+// ============================================
+
+interface BrowserHealthState {
+  isHealthy: boolean;
+  lastCheckTime: number;
+  consecutiveFailures: number;
+  provider: BrowserProviderConfig['type'] | null;
+  errorMessage: string | null;
+}
+
+const healthState: BrowserHealthState = {
+  isHealthy: false,
+  lastCheckTime: 0,
+  consecutiveFailures: 0,
+  provider: null,
+  errorMessage: null,
+};
+
+const HEALTH_CHECK_CACHE_MS = 10000; // Cache health check for 10 seconds
+const MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
+ * Check browser automation availability with caching.
+ * Returns cached result if checked within last 10 seconds.
+ *
+ * @param forceCheck - Bypass cache and perform fresh check
+ * @returns Health check result
+ */
+export async function checkBrowserHealth(forceCheck = false): Promise<{
+  isHealthy: boolean;
+  provider: BrowserProviderConfig['type'] | null;
+  errorMessage: string | null;
+  voiceMessage: string;
+}> {
+  const now = Date.now();
+
+  // Return cached result if recent and not forced
+  if (!forceCheck && now - healthState.lastCheckTime < HEALTH_CHECK_CACHE_MS) {
+    return {
+      isHealthy: healthState.isHealthy,
+      provider: healthState.provider,
+      errorMessage: healthState.errorMessage,
+      voiceMessage: healthState.isHealthy
+        ? 'Browser is ready.'
+        : healthState.errorMessage || 'Browser is not available.',
+    };
+  }
+
+  // Check for cloud provider first
+  const browserbaseConfigured = !!process.env.BROWSERBASE_API_KEY?.trim();
+
+  if (browserbaseConfigured) {
+    // Browserbase is configured - assume healthy (actual connection test happens on use)
+    healthState.isHealthy = true;
+    healthState.provider = 'browserbase';
+    healthState.errorMessage = null;
+    healthState.lastCheckTime = now;
+    healthState.consecutiveFailures = 0;
+
+    return {
+      isHealthy: true,
+      provider: 'browserbase',
+      errorMessage: null,
+      voiceMessage: 'Browser automation is ready using cloud provider.',
+    };
+  }
+
+  // Check local Chrome availability
+  const debugPort = parseInt(process.env.CHROME_DEBUG_PORT?.trim() || '9222', 10);
+  const localAvailable = await isLocalChromeAvailable(debugPort);
+
+  if (localAvailable) {
+    healthState.isHealthy = true;
+    healthState.provider = 'local-cdp';
+    healthState.errorMessage = null;
+    healthState.lastCheckTime = now;
+    healthState.consecutiveFailures = 0;
+
+    return {
+      isHealthy: true,
+      provider: 'local-cdp',
+      errorMessage: null,
+      voiceMessage: 'Browser is ready.',
+    };
+  }
+
+  // No browser available
+  healthState.isHealthy = false;
+  healthState.provider = null;
+  healthState.consecutiveFailures++;
+  healthState.lastCheckTime = now;
+  healthState.errorMessage = `Chrome is not running with debugging enabled on port ${debugPort}`;
+
+  const voiceMessage = healthState.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
+    ? 'Browser automation is not available. Please start Chrome with debugging enabled.'
+    : 'I cannot access the browser right now. Please make sure Chrome is running.';
+
+  return {
+    isHealthy: false,
+    provider: null,
+    errorMessage: healthState.errorMessage,
+    voiceMessage,
+  };
+}
+
+/**
+ * Report a browser operation failure.
+ * Updates health state to track consecutive failures.
+ */
+export function reportBrowserFailure(error?: Error): void {
+  healthState.consecutiveFailures++;
+  healthState.lastCheckTime = 0; // Force fresh check on next request
+  healthState.errorMessage = error?.message || 'Browser operation failed';
+
+  if (healthState.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    healthState.isHealthy = false;
+    console.warn(`[BrowserHealth] ${healthState.consecutiveFailures} consecutive failures, marking unhealthy`);
+  }
+}
+
+/**
+ * Report a successful browser operation.
+ * Resets failure tracking.
+ */
+export function reportBrowserSuccess(): void {
+  healthState.consecutiveFailures = 0;
+  healthState.isHealthy = true;
+  healthState.errorMessage = null;
+}
+
+/**
+ * Get current health state (for monitoring/debugging).
+ */
+export function getBrowserHealthState(): Readonly<BrowserHealthState> {
+  return { ...healthState };
+}
