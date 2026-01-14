@@ -38,6 +38,7 @@ export interface AIConfig {
   openaiApiKey?: string;
   anthropicApiKey?: string;
   mem0ApiKey?: string;
+  perplexityApiKey?: string;
 }
 
 export interface AppConfig {
@@ -92,6 +93,7 @@ export const config: AppConfig = {
     openaiApiKey: trimEnv('OPENAI_API_KEY'),
     anthropicApiKey: trimEnv('ANTHROPIC_API_KEY'),
     mem0ApiKey: trimEnv('MEM0_API_KEY'),
+    perplexityApiKey: trimEnv('PERPLEXITY_API_KEY'),
   },
   appUrl: trimEnv('APP_URL') || trimEnv('NEXTAUTH_URL') || 'http://localhost:3000',
   isProduction: process.env.NODE_ENV === 'production',
@@ -209,6 +211,7 @@ export const features = {
   database: () => Boolean(config.database.url),
   gmail: () => config.gmail.enabled && Boolean(config.gmail.clientId),
   memory: () => Boolean(config.ai.mem0ApiKey),
+  research: () => Boolean(config.ai.perplexityApiKey),
   browserAutomation: () => {
     if (config.browser.provider === 'browserbase') {
       return Boolean(config.browser.browserbaseApiKey && config.browser.browserbaseProjectId);

@@ -301,12 +301,12 @@ function evaluateCondition(condition: string, context: ExecutionContext): boolea
 async function executeTool(toolName: string, params: Record<string, unknown>): Promise<ToolResult> {
   // Map tool names to their API endpoints
   const toolApiMap: Record<string, { endpoint: string; method: string }> = {
-    // Research tools
-    start_research: { endpoint: '/api/notebooklm', method: 'POST' },
-    add_research_source: { endpoint: '/api/notebooklm', method: 'POST' },
-    ask_notebook: { endpoint: '/api/notebooklm', method: 'POST' },
-    get_research_summary: { endpoint: '/api/notebooklm', method: 'POST' },
-    close_research: { endpoint: '/api/notebooklm', method: 'POST' },
+    // Research tools (Perplexity AI powered)
+    start_research: { endpoint: '/api/research', method: 'POST' },
+    ask_research: { endpoint: '/api/research', method: 'POST' },
+    get_research_summary: { endpoint: '/api/research', method: 'POST' },
+    get_news: { endpoint: '/api/research', method: 'POST' },
+    close_research: { endpoint: '/api/research', method: 'POST' },
 
     // Build tools
     start_build_project: { endpoint: '/api/build/start', method: 'POST' },
@@ -380,14 +380,14 @@ async function executeTool(toolName: string, params: Record<string, unknown>): P
 }
 
 /**
- * Map tool name to NotebookLM action
+ * Map tool name to research API action
  */
 function toolNameToAction(toolName: string): string {
   const actionMap: Record<string, string> = {
     start_research: 'start_research',
-    add_research_source: 'add_source',
-    ask_notebook: 'ask_question',
+    ask_research: 'ask_question',
     get_research_summary: 'get_summary',
+    get_news: 'get_news',
     close_research: 'close_research',
   };
   return actionMap[toolName] || toolName;

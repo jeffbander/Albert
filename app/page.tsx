@@ -1300,25 +1300,29 @@ export default function Home() {
           break;
         }
 
-        // NotebookLM Research Tools
+        // Research Tools (Perplexity AI powered)
         case 'start_research': {
-          const response = await fetch('/api/notebooklm', {
+          const response = await fetch('/api/research', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'start_research',
               topic: parsedArgs.topic,
-              initialSources: parsedArgs.initialSources,
+              searchRecency: parsedArgs.searchRecency,
             }),
           });
           const data = await response.json();
           if (data.success) {
-            // Subscribe to research progress
-            subscribeToResearchProgress(data.sessionId, parsedArgs.topic);
+            // Format citations for voice response
+            const citationSummary = data.citations?.length
+              ? ` Found ${data.citations.length} sources.`
+              : '';
             result = JSON.stringify({
               success: true,
               sessionId: data.sessionId,
-              message: `Starting research on "${parsedArgs.topic}". I'll create a NotebookLM notebook and begin gathering sources.`,
+              answer: data.answer,
+              citations: data.citations,
+              message: `Here's what I found about "${parsedArgs.topic}":${citationSummary}\n\n${data.answer}`,
             });
           } else {
             result = JSON.stringify({
@@ -1330,48 +1334,34 @@ export default function Home() {
           break;
         }
 
-        case 'add_research_source': {
-          const response = await fetch('/api/notebooklm', {
+        case 'ask_research': {
+          const response = await fetch('/api/research', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              action: 'add_source',
-              sourceType: parsedArgs.sourceType,
-              content: parsedArgs.content,
-              description: parsedArgs.description,
-            }),
-          });
-          const data = await response.json();
-          result = JSON.stringify({
-            success: data.success,
-            message: data.success
-              ? `Adding ${parsedArgs.sourceType} source to the research...`
-              : data.error || 'Failed to add source.',
-          });
-          break;
-        }
-
-        case 'ask_notebook': {
-          const response = await fetch('/api/notebooklm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'ask_notebook',
+              action: 'ask_question',
               question: parsedArgs.question,
             }),
           });
           const data = await response.json();
-          result = JSON.stringify({
-            success: data.success,
-            message: data.success
-              ? "Asking NotebookLM... I'll tell you when I have an answer."
-              : data.error || 'Failed to ask question.',
-          });
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              answer: data.answer,
+              citations: data.citations,
+              message: data.answer,
+            });
+          } else {
+            result = JSON.stringify({
+              success: false,
+              message: data.error || 'Failed to get answer.',
+            });
+          }
           break;
         }
 
         case 'get_research_summary': {
-          const response = await fetch('/api/notebooklm', {
+          const response = await fetch('/api/research', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1380,12 +1370,48 @@ export default function Home() {
             }),
           });
           const data = await response.json();
-          result = JSON.stringify({
-            success: data.success,
-            message: data.success
-              ? 'Generating research summary...'
-              : data.error || 'Failed to get summary.',
+          if (data.success) {
+            result = JSON.stringify({
+              success: true,
+              summary: data.summary,
+              citations: data.citations,
+              message: data.summary,
+            });
+          } else {
+            result = JSON.stringify({
+              success: false,
+              message: data.error || 'Failed to get summary.',
+            });
+          }
+          break;
+        }
+
+        case 'get_news': {
+          const response = await fetch('/api/research', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'get_news',
+              topic: parsedArgs.topic,
+            }),
           });
+          const data = await response.json();
+          if (data.success) {
+            const citationSummary = data.citations?.length
+              ? ` (${data.citations.length} sources)`
+              : '';
+            result = JSON.stringify({
+              success: true,
+              news: data.news,
+              citations: data.citations,
+              message: `Latest news on "${parsedArgs.topic}"${citationSummary}:\n\n${data.news}`,
+            });
+          } else {
+            result = JSON.stringify({
+              success: false,
+              message: data.error || 'Failed to get news.',
+            });
+          }
           break;
         }
 
@@ -1397,18 +1423,17 @@ export default function Home() {
             activeResearchIdRef.current = null;
           }
 
-          const response = await fetch('/api/notebooklm', {
+          const response = await fetch('/api/research', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'close_research',
-              saveNotes: parsedArgs.saveNotes,
             }),
           });
           const data = await response.json();
           result = JSON.stringify({
             success: data.success,
-            message: 'Research session closed. Your notebook is saved in NotebookLM.',
+            message: data.message || 'Research session closed.',
           });
           break;
         }
