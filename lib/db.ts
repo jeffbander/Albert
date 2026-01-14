@@ -643,6 +643,74 @@ export async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider)
   `);
 
+  // Task Memory: Track tasks across sessions for resumption
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS task_memory (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT,
+      user_id TEXT DEFAULT 'default-voice-user',
+      task_description TEXT NOT NULL,
+      task_type TEXT CHECK(task_type IN ('research', 'build', 'browser', 'general', 'notebooklm')),
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'failed', 'blocked', 'cancelled')),
+      priority INTEGER DEFAULT 0,
+      subtasks TEXT,
+      completed_subtasks TEXT,
+      blockers TEXT,
+      context TEXT,
+      tools_used TEXT,
+      error_message TEXT,
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME,
+      parent_task_id TEXT,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+      FOREIGN KEY (parent_task_id) REFERENCES task_memory(id)
+    )
+  `);
+
+  // Create indexes for task_memory lookups
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_memory_user ON task_memory(user_id)
+  `);
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_memory_status ON task_memory(status)
+  `);
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_task_memory_conversation ON task_memory(conversation_id)
+  `);
+
+  // Memory Usage Feedback: Track which memories lead to good responses
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS memory_usage_feedback (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT,
+      memory_ids TEXT NOT NULL,
+      response_rating TEXT CHECK(response_rating IN ('positive', 'negative', 'neutral')),
+      task_completed INTEGER DEFAULT 0,
+      feedback_text TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    )
+  `);
+
+  // Memory Effectiveness: Track memory retrieval success
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS memory_effectiveness (
+      memory_id TEXT PRIMARY KEY,
+      times_retrieved INTEGER DEFAULT 0,
+      times_helpful INTEGER DEFAULT 0,
+      times_unhelpful INTEGER DEFAULT 0,
+      effectiveness_score REAL DEFAULT 0.5,
+      last_used DATETIME,
+      last_feedback TEXT
+    )
+  `);
+
+  // Create index for effectiveness lookups
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_memory_effectiveness_score ON memory_effectiveness(effectiveness_score DESC)
+  `);
+
   // Initialize skill tables for Albert's skill authoring system
   await initSkillTables();
 }
