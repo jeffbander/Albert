@@ -42,6 +42,7 @@ function DashboardContent() {
   const dcRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const panelsInitializedRef = useRef(false);
 
   // Panel rendering map
   const renderPanel = (panelState: typeof state.panels[0]) => {
@@ -468,14 +469,20 @@ function DashboardContent() {
     }
   }, [handleRealtimeEvent, endConversation, setVoiceConnected, updateServiceStatus]);
 
-  // Open voice panel on load and set up electron event listeners
+  // Open voice panel and task queue on initial load only
   useEffect(() => {
+    // Use ref to prevent duplicates (React Strict Mode calls effects twice)
+    if (panelsInitializedRef.current) return;
+    panelsInitializedRef.current = true;
+
     const id = openPanel('voice');
     setVoicePanelId(id);
-
-    // Also open task queue
     openPanel('task-queue');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // Set up electron event listeners (separate effect to handle voice state changes)
+  useEffect(() => {
     // Listen for Electron menu events (when running in desktop app)
     const handleOpenPanel = (e: CustomEvent<{ type: PanelType }>) => {
       openPanel(e.detail.type);
@@ -502,7 +509,7 @@ function DashboardContent() {
       window.removeEventListener('albert-open-config', handleOpenConfig);
       window.removeEventListener('albert-toggle-voice', handleToggleVoice);
     };
-  }, [isVoiceConnected]);
+  }, [isVoiceConnected, endConversation, startConversation, openPanel]);
 
   // Get quick action counts
   const runningTasks = state.tasks.filter(t => t.status === 'running').length;
