@@ -17,6 +17,7 @@ const phaseProgress: Record<BuildStatus, number> = {
   deploying: 90,
   complete: 100,
   failed: 0,
+  cancelled: 0,
 };
 
 export default function BuildProgressBar({ progress, phase, isActive }: BuildProgressBarProps) {

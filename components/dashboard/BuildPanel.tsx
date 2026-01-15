@@ -292,11 +292,11 @@ export default function BuildPanel({ panel }: BuildPanelProps) {
                   <div className="flex items-center gap-2">
                     <span
                       className={`text-xs ${
-                        activity.status === 'success'
+                        activity.status === 'complete'
                           ? 'text-green-400'
                           : activity.status === 'error'
                           ? 'text-red-400'
-                          : activity.status === 'in_progress'
+                          : activity.status === 'running'
                           ? 'text-yellow-400'
                           : 'text-gray-400'
                       }`}
@@ -307,8 +307,8 @@ export default function BuildPanel({ panel }: BuildPanelProps) {
                       <span className="text-xs text-gray-500 truncate">{activity.filePath}</span>
                     )}
                   </div>
-                  {activity.content && (
-                    <p className="text-xs text-gray-400 mt-1 truncate">{activity.content}</p>
+                  {activity.summary && (
+                    <p className="text-xs text-gray-400 mt-1 truncate">{activity.summary}</p>
                   )}
                 </div>
               ))}

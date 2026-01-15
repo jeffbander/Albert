@@ -7,7 +7,8 @@ export type BuildStatus =
   | 'testing'
   | 'deploying'
   | 'complete'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 export type ProjectType =
   | 'web-app'
@@ -85,4 +86,28 @@ export interface CheckBuildStatusArgs {
 export interface ModifyProjectArgs {
   projectId: string;
   changeDescription: string;
+}
+
+// Build activity types for real-time dashboard feed
+export type ActivityType =
+  | 'thinking'
+  | 'file_write'
+  | 'file_edit'
+  | 'file_read'
+  | 'command'
+  | 'search'
+  | 'decision'
+  | 'web_fetch'
+  | 'error'
+  | 'complete';
+
+export interface BuildActivity {
+  id: string;
+  timestamp: Date;
+  type: ActivityType;
+  summary: string;
+  details?: string;
+  filePath?: string;
+  status: 'pending' | 'running' | 'complete' | 'error';
+  duration?: number;
 }
