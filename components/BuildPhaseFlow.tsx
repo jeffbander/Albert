@@ -22,6 +22,7 @@ const phaseOrder: Record<BuildStatus, number> = {
   deploying: 3,
   complete: 4,
   failed: -1,
+  cancelled: -1,
 };
 
 export default function BuildPhaseFlow({ currentPhase }: BuildPhaseFlowProps) {

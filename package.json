@@ -9,7 +9,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "electron": "npm run build && cd electron && npm start",
+    "electron:dev": "cd electron && npm start",
+    "electron:build": "npm run build && cd electron && npm run build",
+    "electron:install": "cd electron && npm install"
   },
   "keywords": [],
   "author": "",
