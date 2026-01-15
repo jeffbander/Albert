@@ -350,6 +350,21 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       } catch {
         updateServiceStatus('Browser', 'disconnected', 'Not available');
       }
+
+      // Check Perplexity
+      try {
+        const perplexityRes = await fetch('/api/research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'health_check' }),
+        });
+        updateServiceStatus(
+          'Perplexity',
+          perplexityRes.ok ? 'connected' : 'disconnected'
+        );
+      } catch {
+        updateServiceStatus('Perplexity', 'disconnected', 'Not configured');
+      }
     };
 
     checkServices();

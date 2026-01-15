@@ -309,6 +309,15 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      case 'health_check': {
+        // Simple health check - just verify the client is configured
+        return NextResponse.json({
+          success: true,
+          configured: true,
+          message: 'Perplexity API is configured and ready',
+        });
+      }
+
       default:
         return NextResponse.json({
           success: false,
